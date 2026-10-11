@@ -1,0 +1,35 @@
+{
+    "name": "AntiProcrastinación",
+    "short_name": "AntiProcrastinación",
+    "start_url": ".",
+    "display": "standalone",
+    "background_color": "#FBFCF5",
+    "theme_color": "#96B23C",
+    "description": "Organiza tus tareas y fechas de entrega para dejar de procrastinar.",
+    "orientation": "portrait-primary",
+    "prefer_related_applications": false,
+    "icons": [
+        {
+            "src": "icons/Icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-maskable-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "maskable"
+        },
+        {
+            "src": "icons/Icon-maskable-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
+        }
+    ]
+}
