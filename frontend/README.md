@@ -33,9 +33,13 @@ lib/
   widgets/    widgets compartidos (campos, etiquetas de estado, filas de tarea)
 ```
 
-## Tema y colores
+## Diseño, tema y colores
+
+Estilo minimalista y suave: fondo neutro con un degradado muy sutil, tarjetas blancas muy
+redondeadas, barra inferior flotante, píldoras para filtros y un anillo de progreso en Inicio.
+Los colores de la paleta (verde, rosa, marrón) se usan solo como acentos; los fondos son neutros.
 
 El tema claro es el predeterminado; en **Perfil → Apariencia** se puede cambiar a oscuro o al del
-sistema, y la elección se recuerda. Todos los colores están en `lib/theme/app_theme.dart`, y el
-comentario de `Paleta` explica para qué se usa cada uno. Para cambiar un color, se edita ahí y
-se refleja en toda la app.
+sistema, y la elección se recuerda. Todos los colores están en `lib/theme/app_theme.dart` y el
+comentario de `Paleta` explica para qué se usa cada uno. Los componentes visuales compartidos
+(tarjetas, píldoras, anillo, etiquetas) están en `lib/widgets/comunes.dart`.

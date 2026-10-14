@@ -2,15 +2,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'screens/home_shell.dart';
+import 'l10n/textos.dart';
 import 'screens/login_screen.dart';
+import 'screens/personalizacion_screen.dart';
+import 'screens/tutorial_screen.dart';
 import 'state/auth_controller.dart';
 import 'state/servicios.dart';
 import 'theme/app_theme.dart';
+import 'widgets/comunes.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Se lee el tema guardado antes de dibujar la primera pantalla, para que no "parpadee".
   await temaController.cargar();
+  await idiomaController.cargar(); // último idioma usado en este dispositivo
   runApp(const AntiProcrastinacionApp());
 }
 
@@ -51,15 +56,16 @@ class _AntiProcrastinacionAppState extends State<AntiProcrastinacionApp> {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: temaController,
+      listenable: Listenable.merge([temaController, idiomaController]),
       builder: (context, _) => MaterialApp(
         navigatorKey: _navegador,
         title: 'AntiProcrastinación',
         debugShowCheckedModeBanner: false,
-        // Toda la app está en español: textos del sistema, selector de fecha y hora, etc.
-        locale: const Locale('es', 'MX'),
-        supportedLocales: const [Locale('es', 'MX'), Locale('es')],
+        // Idioma de toda la app (español o inglés): textos propios, selector de fecha y hora, etc.
+        locale: idiomaController.locale,
+        supportedLocales: [for (final c in idiomasSoportados) Locale(c)],
         localizationsDelegates: const [
+          TextosDelegate(),
           GlobalMaterialLocalizations.delegate,
           GlobalWidgetsLocalizations.delegate,
           GlobalCupertinoLocalizations.delegate,
@@ -73,10 +79,15 @@ class _AntiProcrastinacionAppState extends State<AntiProcrastinacionApp> {
           builder: (context, _) {
             switch (authController.estado) {
               case EstadoSesion.iniciando:
-                return const Scaffold(body: Center(child: CircularProgressIndicator()));
+                return const Pantalla(body: Center(child: CircularProgressIndicator()));
               case EstadoSesion.sinSesion:
                 return const LoginScreen();
               case EstadoSesion.conSesion:
+                // Primer uso: Personalización -> Tutorial -> Dashboard. Los avisos de "ya hecho" viven
+                // en el servidor, así que si la app se cierra a medias se retoma en el paso pendiente.
+                final u = authController.usuario;
+                if (u != null && !u.personalizacionCompletada) return const PersonalizacionScreen();
+                if (u != null && !u.tutorialCompletado) return const TutorialScreen();
                 return const HomeShell();
             }
           },

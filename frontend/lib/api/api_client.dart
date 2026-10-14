@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart' show MediaType;
 
 import '../config.dart';
 
@@ -98,6 +99,29 @@ class ApiClient {
 
   Future<dynamic> patch(String ruta, {Object? body}) => _enviar('PATCH', ruta, body: body);
 
+  Future<dynamic> put(String ruta, {Object? body}) => _enviar('PUT', ruta, body: body);
+
+  /// Sube un archivo como multipart (campo [campo]). Se usa para la foto de perfil.
+  Future<dynamic> subirArchivo(
+    String ruta, {
+    required String campo,
+    required List<int> bytes,
+    required String nombreArchivo,
+    required String tipoMime,
+  }) =>
+      _enviar('PUT', ruta, archivo: _Archivo(campo, bytes, nombreArchivo, tipoMime));
+
+  /// Descarga una respuesta binaria (imagen) con la sesión actual. Devuelve null si no existe (404).
+  Future<List<int>?> obtenerBytes(String ruta) async {
+    try {
+      final r = await _enviar('GET', ruta, binario: true);
+      return r as List<int>?;
+    } on ApiException catch (e) {
+      if (e.statusCode == 404) return null;
+      rethrow;
+    }
+  }
+
   Future<void> delete(String ruta) async {
     await _enviar('DELETE', ruta);
   }
@@ -109,15 +133,31 @@ class ApiClient {
     Object? body,
     bool auth = true,
     bool puedeReintentar = true,
+    _Archivo? archivo,
+    bool binario = false,
   }) async {
     final uri = Uri.parse('$apiBaseUrl$ruta').replace(queryParameters: query);
-    final peticion = http.Request(metodo, uri)..headers['Accept'] = 'application/json';
+    // Una petición no se puede reenviar una vez enviada: en cada intento se construye una nueva.
+    final http.BaseRequest peticion;
+    if (archivo != null) {
+      peticion = http.MultipartRequest(metodo, uri)
+        ..files.add(http.MultipartFile.fromBytes(
+          archivo.campo,
+          archivo.bytes,
+          filename: archivo.nombre,
+          contentType: MediaType.parse(archivo.tipoMime),
+        ));
+    } else {
+      final simple = http.Request(metodo, uri);
+      if (body != null) {
+        simple.headers['Content-Type'] = 'application/json';
+        simple.body = jsonEncode(body);
+      }
+      peticion = simple;
+    }
+    peticion.headers['Accept'] = binario ? '*/*' : 'application/json';
     if (auth && _accessToken != null) {
       peticion.headers['Authorization'] = 'Bearer $_accessToken';
-    }
-    if (body != null) {
-      peticion.headers['Content-Type'] = 'application/json';
-      peticion.body = jsonEncode(body);
     }
 
     http.Response respuesta;
@@ -134,7 +174,12 @@ class ApiClient {
       // Acceso vencido: se intenta renovar UNA vez y se repite la petición.
       if (puedeReintentar && _refreshToken != null && await renovar()) {
         return _enviar(metodo, ruta,
-            query: query, body: body, auth: auth, puedeReintentar: false);
+            query: query,
+            body: body,
+            auth: auth,
+            puedeReintentar: false,
+            archivo: archivo,
+            binario: binario);
       }
       // Sin refresh token (rechazado o inexistente) la sesión se perdió: se avisa a la app.
       if (_refreshToken == null) alExpirarSesion?.call();
@@ -142,6 +187,7 @@ class ApiClient {
 
     if (respuesta.statusCode >= 200 && respuesta.statusCode < 300) {
       if (respuesta.bodyBytes.isEmpty) return null;
+      if (binario) return respuesta.bodyBytes;
       return jsonDecode(utf8.decode(respuesta.bodyBytes));
     }
     throw _construirError(respuesta);
@@ -164,4 +210,13 @@ class ApiClient {
       return ApiException(r.statusCode, 'ERROR', 'Error inesperado (${r.statusCode}).');
     }
   }
+}
+
+class _Archivo {
+  const _Archivo(this.campo, this.bytes, this.nombre, this.tipoMime);
+
+  final String campo;
+  final List<int> bytes;
+  final String nombre;
+  final String tipoMime;
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/textos.dart';
 import '../state/servicios.dart';
 import '../widgets/comunes.dart';
 
@@ -50,18 +51,19 @@ class _RegistroScreenState extends State<RegistroScreen> {
   }
 
   String? _validarPassword(String? v) {
+    final t = context.t;
     final texto = v ?? '';
-    if (texto.length < 8) return 'Mínimo 8 caracteres';
-    if (texto.length > 128) return 'Máximo 128 caracteres';
-    if (!_tieneLetra.hasMatch(texto)) return 'Incluye al menos una letra';
-    if (!_tieneNumero.hasMatch(texto)) return 'Incluye al menos un número';
+    if (texto.length < 8) return t.passMin;
+    if (texto.length > 128) return t.passMax;
+    if (!_tieneLetra.hasMatch(texto)) return t.passLetra;
+    if (!_tieneNumero.hasMatch(texto)) return t.passNumero;
     return null;
   }
 
   @override
   Widget build(BuildContext context) {
     final tema = Theme.of(context);
-    return Scaffold(
+    return Pantalla(
       appBar: barraSimple(context, ''),
       body: SafeArea(
         child: Center(
@@ -76,10 +78,10 @@ class _RegistroScreenState extends State<RegistroScreen> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Text('Crea tu cuenta', style: tema.textTheme.headlineMedium),
+                      Text(context.t.creaTuCuenta, style: tema.textTheme.headlineMedium),
                       const SizedBox(height: 8),
                       Text(
-                        'Organiza tus tareas y fechas de entrega en un solo lugar.',
+                        context.t.organizaTusTareasLema,
                         style: tema.textTheme.bodyMedium
                             ?.copyWith(color: tema.colorScheme.onSurfaceVariant),
                       ),
@@ -89,7 +91,7 @@ class _RegistroScreenState extends State<RegistroScreen> {
                         textCapitalization: TextCapitalization.words,
                         textInputAction: TextInputAction.next,
                         autofillHints: const [AutofillHints.name],
-                        decoration: decoracionCampo(context, 'Nombre (opcional)'),
+                        decoration: decoracionCampo(context, context.t.nombreOpcional),
                       ),
                       const SizedBox(height: 16),
                       TextFormField(
@@ -97,11 +99,11 @@ class _RegistroScreenState extends State<RegistroScreen> {
                         keyboardType: TextInputType.emailAddress,
                         textInputAction: TextInputAction.next,
                         autofillHints: const [AutofillHints.email],
-                        decoration: decoracionCampo(context, 'Correo electrónico'),
+                        decoration: decoracionCampo(context, context.t.correo),
                         validator: (v) {
                           final texto = v?.trim() ?? '';
-                          if (texto.isEmpty) return 'Escribe tu correo';
-                          if (!esCorreoValido(texto)) return 'El correo no es válido';
+                          if (texto.isEmpty) return context.t.escribeTuCorreo;
+                          if (!esCorreoValido(texto)) return context.t.correoInvalido;
                           return null;
                         },
                       ),
@@ -113,10 +115,10 @@ class _RegistroScreenState extends State<RegistroScreen> {
                         autofillHints: const [AutofillHints.newPassword],
                         decoration: decoracionCampo(
                           context,
-                          'Contraseña',
-                          ayuda: 'Mínimo 8 caracteres, con al menos una letra y un número',
+                          context.t.contrasena,
+                          ayuda: context.t.ayudaContrasena,
                           sufijo: IconButton(
-                            tooltip: _verPassword ? 'Ocultar contraseña' : 'Mostrar contraseña',
+                            tooltip: _verPassword ? context.t.ocultarContrasena : context.t.mostrarContrasena,
                             onPressed: () => setState(() => _verPassword = !_verPassword),
                             icon: Icon(_verPassword
                                 ? Icons.visibility_off_outlined
@@ -134,7 +136,7 @@ class _RegistroScreenState extends State<RegistroScreen> {
                                 height: 20,
                                 width: 20,
                                 child: CircularProgressIndicator(strokeWidth: 2))
-                            : const Text('Crear cuenta'),
+                            : Text(context.t.crearCuenta),
                       ),
                     ],
                   ),

@@ -35,7 +35,7 @@ PASSWORD_VALIDA = "ClaveSegura123"
 
 @pytest.fixture(scope="session")
 def engine():
-    eng = create_engine(URL_PRUEBAS)
+    eng = create_engine(URL_PRUEBAS, connect_args={"options": "-c timezone=UTC"})
     with eng.begin() as conn:
         conn.execute(text("DROP SCHEMA public CASCADE"))
         conn.execute(text("CREATE SCHEMA public"))
@@ -52,7 +52,7 @@ def limpiar_tablas(engine):
     yield
     with engine.begin() as conn:
         conn.execute(
-            text("TRUNCATE historial_evento, tarea, materia, sesion_autenticacion, usuario CASCADE")
+            text("TRUNCATE historial_evento, tarea, materia, sesion_autenticacion, foto_perfil, preferencia_notificacion, usuario CASCADE")
         )
 
 

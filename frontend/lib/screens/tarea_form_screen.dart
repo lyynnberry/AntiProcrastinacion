@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/textos.dart';
 import '../models/modelos.dart';
 import '../state/servicios.dart';
+import '../theme/app_theme.dart';
 import '../widgets/comunes.dart';
 
 const _valorNuevaMateria = '__nueva__';
@@ -72,13 +74,13 @@ class _TareaFormScreenState extends State<TareaFormScreen> {
       initialDate: _fechaLimite,
       firstDate: primera,
       lastDate: ultima,
-      helpText: 'Fecha límite',
+      helpText: context.t.fechaLimite,
     );
     if (dia == null || !mounted) return;
     final hora = await showTimePicker(
       context: context,
       initialTime: TimeOfDay.fromDateTime(_fechaLimite),
-      helpText: 'Hora límite',
+      helpText: context.t.horaLimite,
     );
     if (hora == null || !mounted) return;
     setState(() => _fechaLimite = DateTime(dia.year, dia.month, dia.day, hora.hour, hora.minute));
@@ -89,19 +91,19 @@ class _TareaFormScreenState extends State<TareaFormScreen> {
     final nombre = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Nueva materia'),
+        title: Text(ctx.t.nuevaMateria),
         content: TextField(
           controller: controlador,
           autofocus: true,
           textCapitalization: TextCapitalization.sentences,
-          decoration: decoracionCampo(ctx, 'Nombre de la materia'),
+          decoration: decoracionCampo(ctx, ctx.t.nombreDeLaMateria),
           onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(ctx.t.cancelar)),
           FilledButton(
               onPressed: () => Navigator.pop(ctx, controlador.text.trim()),
-              child: const Text('Crear')),
+              child: Text(ctx.t.crear)),
         ],
       ),
     );
@@ -123,7 +125,7 @@ class _TareaFormScreenState extends State<TareaFormScreen> {
     final fechaCambio = original == null || !_fechaLimite.isAtSameMomentAs(original.fechaLimite);
     // Solo se valida la fecha al crear o cuando el usuario la cambia (el backend aplica la misma regla).
     if (fechaCambio && !_fechaLimite.isAfter(DateTime.now())) {
-      mostrarMensaje(context, 'La fecha límite debe ser posterior a la fecha y hora actual.');
+      mostrarMensaje(context, context.t.fechaDebeSerFutura);
       return;
     }
 
@@ -164,8 +166,8 @@ class _TareaFormScreenState extends State<TareaFormScreen> {
   Widget build(BuildContext context) {
     final tema = Theme.of(context);
     final vencidaOriginal = _original?.vencida ?? false;
-    return Scaffold(
-      appBar: barraSimple(context, _editando ? 'Editar tarea' : 'Nueva tarea'),
+    return Pantalla(
+      appBar: barraSimple(context, _editando ? context.t.editarTarea : context.t.nuevaTarea),
       body: SafeArea(
         child: ContenidoCentrado(
           child: Form(
@@ -183,50 +185,54 @@ class _TareaFormScreenState extends State<TareaFormScreen> {
                   buildCounter: (context,
                           {required currentLength, required isFocused, required maxLength}) =>
                       null,
-                  decoration: decoracionCampo(context, 'Título'),
+                  decoration: decoracionCampo(context, context.t.titulo),
                   validator: (v) =>
-                      (v == null || v.trim().isEmpty) ? 'El título es obligatorio' : null,
+                      (v == null || v.trim().isEmpty) ? context.t.tituloObligatorio : null,
                 ),
                 const SizedBox(height: 16),
                 TextFormField(
                   controller: _descripcion,
                   maxLines: 3,
                   textCapitalization: TextCapitalization.sentences,
-                  decoration: decoracionCampo(context, 'Descripción (opcional)'),
+                  decoration: decoracionCampo(context, context.t.descripcionOpcional),
                 ),
                 const SizedBox(height: 24),
-                Text('Prioridad', style: tema.textTheme.labelLarge),
+                Text(context.t.prioridadEtiqueta, style: tema.textTheme.labelLarge),
                 const SizedBox(height: 8),
-                SegmentedButton<String>(
-                  showSelectedIcon: false,
-                  segments: [
-                    for (final e in prioridades.entries)
-                      ButtonSegment<String>(value: e.key, label: Text(e.value)),
+                Row(children: [
+                  for (final p in codigosPrioridad) ...[
+                    if (p != codigosPrioridad.first) const SizedBox(width: 8),
+                    Expanded(
+                      child: _OpcionPrioridad(
+                        valor: p,
+                        etiqueta: context.t.prioridad(p),
+                        elegida: _prioridad == p,
+                        onTap: () => setState(() => _prioridad = p),
+                      ),
+                    ),
                   ],
-                  selected: {_prioridad},
-                  onSelectionChanged: (s) => setState(() => _prioridad = s.first),
-                ),
+                ]),
                 const SizedBox(height: 24),
                 InkWell(
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(20),
                   onTap: _elegirFechaHora,
                   child: InputDecorator(
                     decoration: decoracionCampo(
                       context,
-                      'Fecha y hora límite',
+                      context.t.fechaYHoraLimite,
                       sufijo: const Icon(Icons.event_outlined),
                     ),
-                    child: Text(formatoFechaHora(_fechaLimite)),
+                    child: Text(context.t.fechaHora(_fechaLimite)),
                   ),
                 ),
                 const SizedBox(height: 16),
                 CampoSelector<String?>(
-                  etiqueta: 'Materia (opcional)',
+                  etiqueta: context.t.materiaOpcional,
                   valor: _idMateria,
                   opciones: [
-                    const Opcion<String?>(null, 'Sin materia'),
+                    Opcion<String?>(null, context.t.sinMateria),
                     for (final m in _materias) Opcion<String?>(m.id, m.nombre),
-                    const Opcion<String?>(_valorNuevaMateria, '+ Nueva materia…'),
+                    Opcion<String?>(_valorNuevaMateria, context.t.masNuevaMateria),
                   ],
                   onChanged: (v) {
                     if (v == _valorNuevaMateria) {
@@ -239,12 +245,12 @@ class _TareaFormScreenState extends State<TareaFormScreen> {
                 if (_editando) ...[
                   const SizedBox(height: 16),
                   CampoSelector<String>(
-                    etiqueta: 'Estado',
+                    etiqueta: context.t.estadoEtiqueta,
                     valor: _estado,
                     opciones: [
                       // "Vencida" no se puede elegir: solo se muestra si la tarea ya lo está.
-                      if (vencidaOriginal) const Opcion<String>('VENCIDA', 'Vencida (automático)'),
-                      for (final e in estadosEditables.entries) Opcion<String>(e.key, e.value),
+                      if (vencidaOriginal) Opcion<String>('VENCIDA', context.t.vencidaAutomatico),
+                      for (final c in codigosEstadoEditable) Opcion<String>(c, context.t.estado(c)),
                     ],
                     onChanged: (v) => setState(() => _estado = v),
                   ),
@@ -257,10 +263,63 @@ class _TareaFormScreenState extends State<TareaFormScreen> {
                           height: 20,
                           width: 20,
                           child: CircularProgressIndicator(strokeWidth: 2))
-                      : Text(_editando ? 'Guardar cambios' : 'Crear tarea'),
+                      : Text(_editando ? context.t.guardarCambios : context.t.crearTarea),
                 ),
               ],
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Opción de prioridad en forma de píldora con borde de color (Baja / Media / Alta).
+class _OpcionPrioridad extends StatelessWidget {
+  const _OpcionPrioridad({
+    required this.valor,
+    required this.etiqueta,
+    required this.elegida,
+    required this.onTap,
+  });
+
+  final String valor;
+  final String etiqueta;
+  final bool elegida;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final e = Theme.of(context).colorScheme;
+    final estilo = estiloPrioridad(context, valor);
+    return Semantics(
+      button: true,
+      selected: elegida,
+      child: Material(
+        color: elegida ? estilo.fondo : e.surfaceContainerLowest,
+        shape: StadiumBorder(
+          side: BorderSide(
+            color: elegida ? estilo.borde : e.outlineVariant,
+            width: elegida ? 1.6 : 1,
+          ),
+        ),
+        child: InkWell(
+          customBorder: const StadiumBorder(),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 13),
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Container(
+                width: 7,
+                height: 7,
+                decoration: BoxDecoration(color: estilo.punto, shape: BoxShape.circle),
+              ),
+              const SizedBox(width: 8),
+              Text(etiqueta,
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      color: elegida ? estilo.texto : e.onSurface,
+                      fontWeight: elegida ? FontWeight.w700 : FontWeight.w600)),
+            ]),
           ),
         ),
       ),

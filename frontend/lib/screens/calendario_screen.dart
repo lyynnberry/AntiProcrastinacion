@@ -1,15 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/textos.dart';
 import '../models/modelos.dart';
 import '../state/servicios.dart';
 import '../widgets/comunes.dart';
 import 'tarea_detalle_screen.dart';
 
-const _meses = [
-  'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
-  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
-];
-const _diasSemana = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
 
 DateTime _soloDia(DateTime d) => DateTime(d.year, d.month, d.day);
 
@@ -85,37 +81,38 @@ class _CalendarioScreenState extends State<CalendarioScreen> {
           } else if (snap.hasError) {
             lista = EstadoError(error: snap.error, onReintentar: _recargar);
           } else if (delDia.isEmpty) {
-            lista = const EstadoVacio(
+            lista = EstadoVacio(
                 icono: Icons.event_available_outlined,
-                mensaje: 'No hay tareas con fecha límite este día.');
+                mensaje: context.t.noHayTareasDia);
           } else {
-            lista = Superficie(
-              child: Column(children: [
-                for (var i = 0; i < delDia.length; i++) ...[
-                  if (i > 0) const Divider(),
-                  TareaTile(tarea: delDia[i], onTap: () => _abrirTarea(delDia[i].id)),
-                ],
-              ]),
-            );
+            lista = Column(children: [
+              for (final t in delDia) ...[
+                TareaTile(tarea: t, onTap: () => _abrirTarea(t.id)),
+                const SizedBox(height: 12),
+              ],
+            ]);
           }
 
           return ListView(
-            padding: const EdgeInsets.fromLTRB(20, 24, 20, 24),
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
             children: [
-              Text('Calendario', style: tema.textTheme.headlineMedium),
-              const SizedBox(height: 16),
+              Text(context.t.calendario, style: tema.textTheme.headlineMedium),
+              const SizedBox(height: 20),
+              Superficie(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                child: Column(children: [
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   IconButton(
-                    tooltip: 'Mes anterior',
+                    tooltip: context.t.mesAnterior,
                     onPressed: () => _cambiarMes(-1),
                     icon: const Icon(Icons.chevron_left),
                   ),
-                  Text('${_meses[_mes.month - 1]} ${_mes.year}',
+                  Text('${context.t.meses[_mes.month - 1]} ${_mes.year}',
                       style: tema.textTheme.titleMedium),
                   IconButton(
-                    tooltip: 'Mes siguiente',
+                    tooltip: context.t.mesSiguiente,
                     onPressed: () => _cambiarMes(1),
                     icon: const Icon(Icons.chevron_right),
                   ),
@@ -123,7 +120,7 @@ class _CalendarioScreenState extends State<CalendarioScreen> {
               ),
               const SizedBox(height: 8),
               Row(children: [
-                for (final d in _diasSemana)
+                for (final d in context.t.diasSemana)
                   Expanded(
                     child: Center(
                       child: Text(d,
@@ -139,8 +136,10 @@ class _CalendarioScreenState extends State<CalendarioScreen> {
                 porDia: porDia,
                 onSeleccionar: (d) => setState(() => _seleccionado = d),
               ),
-              const SizedBox(height: 20),
-              Text('Tareas del ${formatoFecha(_seleccionado)}', style: tema.textTheme.titleSmall),
+                ]),
+              ),
+              const SizedBox(height: 24),
+              Text(context.t.tareasDelDia(_seleccionado), style: tema.textTheme.titleSmall),
               const SizedBox(height: 12),
               lista,
             ],
@@ -184,18 +183,19 @@ class _Cuadricula extends StatelessWidget {
             button: true,
             selected: esSeleccionado,
             onTap: () => onSeleccionar(fecha),
-            label: '$dia de ${_meses[mes.month - 1]}'
-                '${tareas.isEmpty ? '' : ', ${tareas.length} tarea${tareas.length == 1 ? '' : 's'}'}',
+            label: context.t.etiquetaDia(dia, mes.month, tareas.length),
             child: ExcludeSemantics(
               child: InkWell(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(14),
                 onTap: () => onSeleccionar(fecha),
                 child: Container(
                   margin: const EdgeInsets.all(2),
                   decoration: BoxDecoration(
-                    color: esSeleccionado ? esquema.primaryContainer : null,
-                    border: esHoy ? Border.all(color: esquema.secondary, width: 1.5) : null,
-                    borderRadius: BorderRadius.circular(12),
+                    color: esSeleccionado ? esquema.inverseSurface : null,
+                    border: esHoy && !esSeleccionado
+                        ? Border.all(color: esquema.secondary, width: 1.5)
+                        : null,
+                    borderRadius: BorderRadius.circular(14),
                   ),
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -203,7 +203,7 @@ class _Cuadricula extends StatelessWidget {
                       Text('$dia',
                           style: TextStyle(
                             color: esSeleccionado
-                                ? esquema.onPrimaryContainer
+                                ? esquema.onInverseSurface
                                 : esquema.onSurface,
                             fontWeight:
                                 esSeleccionado || esHoy ? FontWeight.w700 : FontWeight.w400,
@@ -217,7 +217,9 @@ class _Cuadricula extends StatelessWidget {
                           shape: BoxShape.circle,
                           color: tareas.isEmpty
                               ? Colors.transparent
-                              : (hayVencida ? esquema.error : esquema.secondary),
+                              : (hayVencida
+                                  ? esquema.error
+                                  : (esSeleccionado ? esquema.primary : esquema.secondary)),
                         ),
                       ),
                     ],

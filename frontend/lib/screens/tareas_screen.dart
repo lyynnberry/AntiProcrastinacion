@@ -1,17 +1,13 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/textos.dart';
 import '../models/modelos.dart';
 import '../state/servicios.dart';
 import '../widgets/comunes.dart';
 import 'tarea_detalle_screen.dart';
 import 'tarea_form_screen.dart';
 
-const _estadosFiltro = {
-  'PENDIENTE': 'Pendiente',
-  'EN_PROGRESO': 'En progreso',
-  'COMPLETADA': 'Completada',
-  'VENCIDA': 'Vencida',
-};
+const _estadosFiltro = ['PENDIENTE', 'EN_PROGRESO', 'COMPLETADA', 'VENCIDA'];
 
 /// RF-07: lista de tareas con filtros por estado, prioridad y materia (combinables).
 class TareasScreen extends StatefulWidget {
@@ -71,133 +67,126 @@ class _TareasScreenState extends State<TareasScreen> {
   @override
   Widget build(BuildContext context) {
     final tema = Theme.of(context);
-    return Scaffold(
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _abrir(const TareaFormScreen()),
-        icon: const Icon(Icons.add),
-        label: const Text('Nueva tarea'),
-      ),
-      body: ContenidoCentrado(
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 24, 20, 0),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('Tareas', style: tema.textTheme.headlineMedium),
-                const SizedBox(height: 16),
-                Row(children: [
-                  Expanded(
-                    child: CampoSelector<String?>(
-                      etiqueta: 'Estado',
-                      valor: _estado,
-                      opciones: [
-                        const Opcion<String?>(null, 'Todos'),
-                        for (final e in _estadosFiltro.entries) Opcion<String?>(e.key, e.value),
-                      ],
-                      onChanged: (v) {
-                        _estado = v;
+    return ContenidoCentrado(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+            child: Row(children: [
+              Expanded(child: Text(context.t.tareas, style: tema.textTheme.headlineMedium)),
+              BotonCircular(
+                icono: Icons.add,
+                tooltip: context.t.nuevaTarea,
+                onPressed: () => _abrir(const TareaFormScreen()),
+              ),
+            ]),
+          ),
+          const SizedBox(height: 20),
+          // Estado: píldoras en una fila que se desplaza.
+          SizedBox(
+            height: 44,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              children: [
+                for (final e in <String?>[null, ..._estadosFiltro])
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: PildoraFiltro(
+                      etiqueta: e == null ? context.t.todas : context.t.estado(e),
+                      activo: _estado == e,
+                      onTap: () {
+                        _estado = e;
                         _recargar();
                       },
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: CampoSelector<String?>(
-                      etiqueta: 'Prioridad',
-                      valor: _prioridad,
-                      opciones: [
-                        const Opcion<String?>(null, 'Todas'),
-                        for (final e in prioridades.entries) Opcion<String?>(e.key, e.value),
-                      ],
-                      onChanged: (v) {
-                        _prioridad = v;
-                        _recargar();
-                      },
-                    ),
-                  ),
-                ]),
-                const SizedBox(height: 8),
-                Row(children: [
-                  Expanded(
-                    child: CampoSelector<String?>(
-                      etiqueta: 'Materia',
-                      valor: _idMateria,
-                      opciones: [
-                        const Opcion<String?>(null, 'Todas'),
-                        for (final m in _materias) Opcion<String?>(m.id, m.nombre),
-                      ],
-                      onChanged: (v) {
-                        _idMateria = v;
-                        _recargar();
-                      },
-                    ),
-                  ),
-                  if (_hayFiltros) ...[
-                    const SizedBox(width: 8),
-                    TextButton(
-                      onPressed: () {
-                        _estado = null;
-                        _prioridad = null;
-                        _idMateria = null;
-                        _recargar();
-                      },
-                      child: const Text('Limpiar'),
-                    ),
-                  ],
-                ]),
-              ]),
+              ],
             ),
-            const SizedBox(height: 16),
-            Expanded(
-              child: FutureBuilder<List<Tarea>>(
-                future: _futuro,
-                builder: (context, snap) {
-                  if (snap.connectionState != ConnectionState.done) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  if (snap.hasError) {
-                    return EstadoError(error: snap.error, onReintentar: _recargar);
-                  }
-                  final tareas = snap.data!;
-                  return RefreshIndicator(
-                    onRefresh: _actualizar,
-                    child: tareas.isEmpty
-                        ? ListView(
-                            physics: const AlwaysScrollableScrollPhysics(),
-                            children: [
-                              const SizedBox(height: 48),
-                              EstadoVacio(
-                                icono: Icons.inbox_outlined,
-                                mensaje: _hayFiltros
-                                    ? 'Ninguna tarea cumple los filtros.'
-                                    : 'Aún no tienes tareas. ¡Crea la primera!',
-                              ),
-                            ],
-                          )
-                        : ListView(
-                            physics: const AlwaysScrollableScrollPhysics(),
-                            // Espacio al final para que el botón flotante no tape la última tarea.
-                            padding: const EdgeInsets.fromLTRB(20, 0, 20, 96),
-                            children: [
-                              Superficie(
-                                child: Column(children: [
-                                  for (var i = 0; i < tareas.length; i++) ...[
-                                    if (i > 0) const Divider(),
-                                    TareaTile(
-                                      tarea: tareas[i],
-                                      onTap: () => _abrir(TareaDetalleScreen(idTarea: tareas[i].id)),
-                                    ),
-                                  ],
-                                ]),
-                              ),
-                            ],
-                          ),
-                  );
+          ),
+          const SizedBox(height: 4),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Wrap(spacing: 8, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
+              SelectorPildora<String?>(
+                etiqueta: context.t.prioridadEtiqueta,
+                valor: _prioridad,
+                opciones: [
+                  Opcion<String?>(null, context.t.todas),
+                  for (final p in codigosPrioridad) Opcion<String?>(p, context.t.prioridad(p)),
+                ],
+                onChanged: (v) {
+                  _prioridad = v;
+                  _recargar();
                 },
               ),
+              SelectorPildora<String?>(
+                etiqueta: context.t.materia,
+                valor: _idMateria,
+                opciones: [
+                  Opcion<String?>(null, context.t.todas),
+                  for (final m in _materias) Opcion<String?>(m.id, m.nombre),
+                ],
+                onChanged: (v) {
+                  _idMateria = v;
+                  _recargar();
+                },
+              ),
+              if (_hayFiltros)
+                TextButton(
+                  onPressed: () {
+                    _estado = null;
+                    _prioridad = null;
+                    _idMateria = null;
+                    _recargar();
+                  },
+                  child: Text(context.t.limpiar),
+                ),
+            ]),
+          ),
+          const SizedBox(height: 16),
+          Expanded(
+            child: FutureBuilder<List<Tarea>>(
+              future: _futuro,
+              builder: (context, snap) {
+                if (snap.connectionState != ConnectionState.done) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (snap.hasError) {
+                  return EstadoError(error: snap.error, onReintentar: _recargar);
+                }
+                final tareas = snap.data!;
+                return RefreshIndicator(
+                  onRefresh: _actualizar,
+                  child: tareas.isEmpty
+                      ? ListView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          children: [
+                            const SizedBox(height: 48),
+                            EstadoVacio(
+                              icono: Icons.inbox_outlined,
+                              mensaje: _hayFiltros
+                                  ? context.t.ningunaCumpleFiltros
+                                  : context.t.aunNoTienesTareas,
+                            ),
+                          ],
+                        )
+                      : ListView.separated(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                          itemCount: tareas.length,
+                          separatorBuilder: (_, __) => const SizedBox(height: 12),
+                          itemBuilder: (_, i) => TareaTile(
+                            tarea: tareas[i],
+                            onTap: () => _abrir(TareaDetalleScreen(idTarea: tareas[i].id)),
+                          ),
+                        ),
+                );
+              },
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
