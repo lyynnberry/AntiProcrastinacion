@@ -209,10 +209,13 @@ class Textos {
   String get perfilTranquilo => _t('Tranquilo', 'Relaxed');
   String get perfilEquilibrado => _t('Equilibrado', 'Balanced');
   String get perfilInsistente => _t('Insistente', 'Persistent');
-  String get perfilTranquiloDesc => _t('Pocos recordatorios, solo lo importante.', 'Few reminders, only what matters.');
-  String get perfilEquilibradoDesc => _t('Recordatorios regulares antes de cada fecha límite.', 'Regular reminders before each deadline.');
-  String get perfilInsistenteDesc =>
-      _t('Más avisos y más frecuentes para que nada se te escape.', 'More, and more frequent, nudges so nothing slips by.');
+  // Describen cuánta insistencia quiere la persona; la escalada por cercanía a la fecha límite (RF-13)
+  // existe en los tres perfiles.
+  String get perfilTranquiloDesc => _t('Pocos recordatorios y con menor frecuencia.', 'Fewer reminders, less often.');
+  String get perfilEquilibradoDesc =>
+      _t('Recordatorios con una frecuencia moderada.', 'Reminders at a moderate pace.');
+  String get perfilInsistenteDesc => _t('Recordatorios más frecuentes conforme se acerque la fecha límite.',
+      'More frequent reminders as the deadline gets closer.');
   String get recomendado => _t('Recomendado', 'Recommended');
   String get puedesCambiarloDespues =>
       _t('Podrás cambiarlo cuando quieras desde tu perfil.', 'You can change this anytime from your profile.');
