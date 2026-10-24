@@ -35,6 +35,16 @@ Registro breve de lo adoptado. Etiquetas: **[DOC]** viene de la documentación (
 - Un recurso ajeno (tarea) devuelve 404 igual que uno inexistente; una materia ajena al asociarla devuelve 404 `MATERIA_NO_ENCONTRADA`.
 - Los eventos de historial no se escriben cuando una edición no cambia ningún valor.
 
+## Perfil, personalización inicial y tutorial (extensión posterior a RF-11)
+- **Nombre `perfil_recordatorios`, no "intensidad"**: V6 ya usa `notificacion.nivel_intensidad` para el nivel de ESCALADA de cada recordatorio (RF-13). La elección Tranquilo/Equilibrado/Insistente es otra cosa (cuánta insistencia quiere la persona) y se guarda en `preferencia_notificacion`. RF-12/RF-13 la leerán como parámetro; la escalada no cambia. Cómo se traduce cada perfil a intervalos (NOT-01) sigue siendo punto abierto: por ahora **solo se guarda**, no hay notificaciones.
+- **Campos nuevos** (V6 §4.2 no los tiene): `usuario.idioma` ('es'|'en'), `personalizacion_completada_en`, `tutorial_completado_en`, `foto_actualizada_en`; tablas `preferencia_notificacion` (perfil + `notificaciones_activas`) y `foto_perfil`. Horas permitidas y zona horaria: la zona ya existe en `usuario`; las horas permitidas no se crearon (no hay RF que las use todavía).
+- **El estado del flujo vive en el servidor** (fechas `*_completada_en`), no en el teléfono: si se cierra la app a medias se retoma en el paso pendiente, y sobrevive a cambiar de dispositivo. Orden: Registro → Personalización → Tutorial → Dashboard. Omitir el tutorial lo marca como visto.
+- **Sin migración de datos**: los usuarios que ya existían verán la personalización y el tutorial una vez en su siguiente inicio de sesión.
+- **Foto**: se guarda en la BD (tabla aparte `foto_perfil`, bytea) y solo la sirve el endpoint autenticado del propio usuario (no hay URL pública). El servidor ignora el nombre y el Content-Type del cliente, abre el archivo con Pillow, acepta solo JPEG/PNG/WebP (máx. 5 MB, 40 MP), y lo **re-codifica** a JPEG 512×512 sin EXIF/GPS. Si más adelante hay mucho tráfico, mover los bytes a almacenamiento de objetos y guardar solo la referencia.
+- **Idioma**: guardado por usuario en el servidor (+ copia local para que el login salga en el último idioma usado). Los errores del backend se traducen en la app por su `codigo`; el texto del servidor sigue en español.
+- La sesión de PostgreSQL se fija en UTC (`db/session.py`): sin eso las fechas dependían de la zona horaria del servidor de BD (una prueba existente fallaba por eso).
+- Nombre editable: 2–100 caracteres; solo letras, espacios, apóstrofo, guion y punto. El correo no es editable.
+
 ## Puntos abiertos (conviene decidirlos más adelante)
 - Una tarea **completada** puede editarse y cambiar su fecha límite a futuro. Queda en el historial, pero podría distorsionar las métricas de "completada a tiempo" (RF-20). Opciones: bloquear el cambio de fecha en tareas completadas, o exigir reabrirlas primero.
 - Sin límite de intentos de login (RNF-04): recomendable antes de publicar.

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/textos.dart';
 import '../models/modelos.dart';
 import '../state/servicios.dart';
 import '../widgets/comunes.dart';
@@ -62,17 +63,17 @@ class _TareaDetalleScreenState extends State<TareaDetalleScreen> {
     final confirmado = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('¿Eliminar tarea?'),
-        content: Text('Se eliminará "${tarea.titulo}". Esta acción no se puede deshacer.'),
+        title: Text(ctx.t.eliminarTareaTitulo),
+        content: Text(ctx.t.eliminarTareaTexto(tarea.titulo)),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(ctx.t.cancelar)),
           FilledButton(
             style: FilledButton.styleFrom(
               backgroundColor: Theme.of(ctx).colorScheme.error,
               foregroundColor: Theme.of(ctx).colorScheme.onError,
             ),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Eliminar'),
+            child: Text(ctx.t.eliminar),
           ),
         ],
       ),
@@ -98,19 +99,19 @@ class _TareaDetalleScreenState extends State<TareaDetalleScreen> {
       future: _futuro,
       builder: (context, snap) {
         final datos = snap.data;
-        return Scaffold(
+        return Pantalla(
           appBar: barraSimple(
             context,
-            'Detalle de la tarea',
+            context.t.detalleDeLaTarea,
             acciones: datos == null
                 ? null
                 : [
                     IconButton(
-                        tooltip: 'Editar',
+                        tooltip: context.t.editar,
                         onPressed: () => _editar(datos.tarea),
                         icon: const Icon(Icons.edit_outlined)),
                     IconButton(
-                        tooltip: 'Eliminar',
+                        tooltip: context.t.eliminar,
                         onPressed: () => _eliminar(datos.tarea),
                         icon: const Icon(Icons.delete_outline)),
                   ],
@@ -128,24 +129,25 @@ class _TareaDetalleScreenState extends State<TareaDetalleScreen> {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
                 children: [
-                  Text(t.titulo, style: tema.textTheme.headlineSmall),
-                  const SizedBox(height: 12),
-                  Align(alignment: Alignment.centerLeft, child: EtiquetaEstado(t.estado)),
+                  Text(t.titulo, style: tema.textTheme.headlineMedium),
+                  const SizedBox(height: 14),
+                  Wrap(spacing: 8, runSpacing: 8, children: [
+                    EtiquetaEstado(t.estado),
+                    EtiquetaPrioridad(t.prioridad),
+                  ]),
                   const SizedBox(height: 24),
                   Superficie(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                     child: Column(children: [
-                      _Fila('Descripción',
+                      _Fila(context.t.descripcion,
                           (t.descripcion?.isNotEmpty ?? false) ? t.descripcion! : '—'),
                       const Divider(),
-                      _Fila('Fecha límite', formatoFechaHora(t.fechaLimite)),
+                      _Fila(context.t.fechaLimite, context.t.fechaHora(t.fechaLimite)),
                       const Divider(),
-                      _Fila('Prioridad', prioridades[t.prioridad] ?? t.prioridad),
-                      const Divider(),
-                      _Fila('Materia', datos.nombreMateria ?? 'Sin materia'),
+                      _Fila(context.t.materia, datos.nombreMateria ?? context.t.sinMateria),
                       if (t.fechaCompletada != null) ...[
                         const Divider(),
-                        _Fila('Completada el', formatoFechaHora(t.fechaCompletada!)),
+                        _Fila(context.t.completadaEl, context.t.fechaHora(t.fechaCompletada!)),
                       ],
                     ]),
                   ),
@@ -154,7 +156,7 @@ class _TareaDetalleScreenState extends State<TareaDetalleScreen> {
                     FilledButton.icon(
                       onPressed: _trabajando ? null : () => _completar(t),
                       icon: const Icon(Icons.check),
-                      label: const Text('Marcar como completada'),
+                      label: Text(context.t.marcarCompletada),
                     ),
                 ],
               ),

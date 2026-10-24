@@ -1,25 +1,41 @@
-/// Modelos que reflejan las respuestas del backend.
+// Modelos que reflejan las respuestas del backend.
 
-/// Prioridades (RF-09) y estados (RF-05) tal como los usa la API.
-const prioridades = {'BAJA': 'Baja', 'MEDIA': 'Media', 'ALTA': 'Alta'};
+/// Códigos de prioridad (RF-09) y estado (RF-05) tal como los usa la API. Sus nombres para mostrar
+/// salen de `context.t.prioridad(...)` / `context.t.estado(...)` (según el idioma).
+const codigosPrioridad = ['BAJA', 'MEDIA', 'ALTA'];
 
 /// Estados que el usuario puede elegir. "VENCIDA" lo calcula el backend; no se puede establecer.
-const estadosEditables = {
-  'PENDIENTE': 'Pendiente',
-  'EN_PROGRESO': 'En progreso',
-  'COMPLETADA': 'Completada',
-};
+const codigosEstadoEditable = ['PENDIENTE', 'EN_PROGRESO', 'COMPLETADA'];
 
-String etiquetaEstado(String estado) =>
-    estadosEditables[estado] ?? (estado == 'VENCIDA' ? 'Vencida' : estado);
+/// Perfiles de recordatorios de la personalización inicial.
+const perfilesRecordatorios = ['tranquilo', 'equilibrado', 'insistente'];
 
 class Usuario {
-  Usuario({required this.id, required this.email, this.nombre, required this.zonaHoraria});
+  Usuario({
+    required this.id,
+    required this.email,
+    this.nombre,
+    required this.zonaHoraria,
+    this.idioma = 'es',
+    this.personalizacionCompletada = false,
+    this.tutorialCompletado = false,
+    this.fotoActualizadaEn,
+  });
 
   final String id;
   final String email;
   final String? nombre;
   final String zonaHoraria;
+  final String idioma; // 'es' | 'en'
+
+  /// Estado del flujo de primer uso (lo decide el servidor, por eso sobrevive a cerrar la app).
+  final bool personalizacionCompletada;
+  final bool tutorialCompletado;
+
+  /// null = sin foto. Cambia cada vez que se sube o borra: sirve para refrescar la imagen en pantalla.
+  final DateTime? fotoActualizadaEn;
+
+  bool get tieneFoto => fotoActualizadaEn != null;
 
   /// Nombre para saludar: el nombre registrado o, si no hay, la parte del correo antes de la "@".
   String get nombreParaSaludo {
@@ -41,6 +57,12 @@ class Usuario {
         email: j['email'] as String,
         nombre: j['nombre'] as String?,
         zonaHoraria: j['zona_horaria'] as String,
+        idioma: (j['idioma'] as String?) ?? 'es',
+        personalizacionCompletada: (j['personalizacion_completada'] as bool?) ?? false,
+        tutorialCompletado: (j['tutorial_completado'] as bool?) ?? false,
+        fotoActualizadaEn: j['foto_actualizada_en'] == null
+            ? null
+            : DateTime.parse(j['foto_actualizada_en'] as String),
       );
 }
 
@@ -89,5 +111,18 @@ class Tarea {
         fechaCompletada: j['fecha_completada'] == null
             ? null
             : DateTime.parse(j['fecha_completada'] as String).toLocal(),
+      );
+}
+
+/// Preferencia de recordatorios elegida por la persona (no es el nivel de escalada de RF-13).
+class PreferenciaRecordatorios {
+  PreferenciaRecordatorios({required this.perfil, required this.activas});
+
+  final String perfil; // tranquilo | equilibrado | insistente
+  final bool activas;
+
+  factory PreferenciaRecordatorios.fromJson(Map<String, dynamic> j) => PreferenciaRecordatorios(
+        perfil: j['perfil_recordatorios'] as String,
+        activas: j['notificaciones_activas'] as bool,
       );
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/textos.dart';
 import '../state/servicios.dart';
 import '../widgets/comunes.dart';
 import 'registro_screen.dart';
@@ -42,7 +43,7 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     final tema = Theme.of(context);
     final e = tema.colorScheme;
-    return Scaffold(
+    return Pantalla(
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -59,20 +60,20 @@ class _LoginScreenState extends State<LoginScreen> {
                       Align(
                         alignment: Alignment.centerLeft,
                         child: Container(
-                          width: 48,
-                          height: 48,
-                          decoration: BoxDecoration(
-                              color: e.primary, borderRadius: BorderRadius.circular(14)),
-                          child: Icon(Icons.check_rounded, color: e.onPrimary, size: 28),
+                          width: 56,
+                          height: 56,
+                          decoration:
+                              BoxDecoration(color: e.inverseSurface, shape: BoxShape.circle),
+                          child: Icon(Icons.check_rounded, color: e.primary, size: 30),
                         ),
                       ),
                       const SizedBox(height: 28),
-                      Text('Bienvenido de vuelta', style: tema.textTheme.headlineMedium),
+                      Text(context.t.bienvenidoDeVuelta, style: tema.textTheme.headlineMedium),
                       const SizedBox(height: 8),
                       Text(
                         authController.sesionExpirada
-                            ? 'Tu sesión expiró. Inicia sesión de nuevo.'
-                            : 'Inicia sesión para continuar con tus tareas.',
+                            ? context.t.sesionExpiro
+                            : context.t.iniciaSesionParaContinuar,
                         style: tema.textTheme.bodyMedium?.copyWith(color: e.onSurfaceVariant),
                       ),
                       const SizedBox(height: 32),
@@ -81,11 +82,11 @@ class _LoginScreenState extends State<LoginScreen> {
                         keyboardType: TextInputType.emailAddress,
                         textInputAction: TextInputAction.next,
                         autofillHints: const [AutofillHints.email],
-                        decoration: decoracionCampo(context, 'Correo electrónico'),
+                        decoration: decoracionCampo(context, context.t.correo),
                         validator: (v) {
                           final texto = v?.trim() ?? '';
-                          if (texto.isEmpty) return 'Escribe tu correo';
-                          if (!esCorreoValido(texto)) return 'El correo no es válido';
+                          if (texto.isEmpty) return context.t.escribeTuCorreo;
+                          if (!esCorreoValido(texto)) return context.t.correoInvalido;
                           return null;
                         },
                       ),
@@ -97,9 +98,9 @@ class _LoginScreenState extends State<LoginScreen> {
                         autofillHints: const [AutofillHints.password],
                         decoration: decoracionCampo(
                           context,
-                          'Contraseña',
+                          context.t.contrasena,
                           sufijo: IconButton(
-                            tooltip: _verPassword ? 'Ocultar contraseña' : 'Mostrar contraseña',
+                            tooltip: _verPassword ? context.t.ocultarContrasena : context.t.mostrarContrasena,
                             onPressed: () => setState(() => _verPassword = !_verPassword),
                             icon: Icon(_verPassword
                                 ? Icons.visibility_off_outlined
@@ -107,7 +108,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                         ),
                         validator: (v) =>
-                            (v == null || v.isEmpty) ? 'Escribe tu contraseña' : null,
+                            (v == null || v.isEmpty) ? context.t.escribeTuContrasena : null,
                         onFieldSubmitted: (_) => _entrar(),
                       ),
                       const SizedBox(height: 24),
@@ -118,7 +119,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                 height: 20,
                                 width: 20,
                                 child: CircularProgressIndicator(strokeWidth: 2))
-                            : const Text('Entrar'),
+                            : Text(context.t.entrar),
                       ),
                       const SizedBox(height: 8),
                       TextButton(
@@ -126,7 +127,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             ? null
                             : () => Navigator.of(context).push(
                                 MaterialPageRoute(builder: (_) => const RegistroScreen())),
-                        child: const Text('¿Aún no tienes cuenta? Crear cuenta'),
+                        child: Text(context.t.aunNoTienesCuenta),
                       ),
                     ],
                   ),

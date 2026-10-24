@@ -8,6 +8,10 @@
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
 	<string>AntiProcrastinación</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Para elegir tu foto de perfil. / To choose your profile photo.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Para tomar tu foto de perfil. / To take your profile photo.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<!-- Permite http:// hacia el backend en la red local durante el desarrollo. -->

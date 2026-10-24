@@ -2,7 +2,7 @@
 
 | Parte | Estado |
 |---|---|
-| `backend/` (FastAPI + PostgreSQL) | **Implementado y probado** (117 pruebas) |
+| `backend/` (FastAPI + PostgreSQL) | **Implementado y probado** (139 pruebas) |
 | `frontend/` (Flutter) | 
 
 Decisiones y puntos abiertos: [`DECISIONES.md`](DECISIONES.md).
@@ -43,7 +43,7 @@ backend/app/
 ├─ db/          conexión y base declarativa
 └─ modules/     un paquete por funcionalidad, cada uno con las capas:
    ├─ auth/       router → service → repository → models   (+ schemas, validators)
-   ├─ usuarios/
+   ├─ usuarios/   perfil, idioma, personalización inicial, tutorial, preferencia de recordatorios y foto (+ imagen.py)
    ├─ materias/
    ├─ tareas/     (+ enums, reglas.py con las reglas puras)
    └─ historial/  mínimo para RF-05 y RF-06
@@ -67,6 +67,17 @@ Para agregar un RF nuevo (p. ej. notificaciones): crear `modules/notificaciones/
 | RF-10 Crear materia | `POST /materias`, `GET /materias` | `materias/service.py` | `test_materias.py` |
 | RF-11 Asociar materia | (en crear/editar tarea) | `tareas/service.py::_exigir_materia_propia`, FK compuesta | `test_tareas.py`, `test_integridad_bd.py` |
 
+### Perfil y primer uso (extensión posterior a RF-11)
+| Qué | Endpoint | Código principal | Pruebas |
+|---|---|---|---|
+| Estado del flujo, idioma, foto | `GET /usuarios/me` | `usuarios/schemas.py::UsuarioSalida` | `test_perfil.py` |
+| Cambiar nombre / idioma | `PATCH /usuarios/me` | `usuarios/service.py::actualizar` | `test_perfil.py` |
+| Preferencia de recordatorios (completa la personalización) | `GET`/`PUT /usuarios/me/preferencia-notificacion` | `usuarios/service.py::guardar_preferencia` | `test_perfil.py` |
+| Tutorial visto (o saltado) | `POST /usuarios/me/tutorial/completar` | `usuarios/service.py::completar_tutorial` | `test_perfil.py` |
+| Foto de perfil | `PUT`/`GET`/`DELETE /usuarios/me/foto` | `usuarios/imagen.py`, `usuarios/service.py` | `test_perfil.py` |
+
+Migración `0002`: columnas `usuario.idioma`, `personalizacion_completada_en`, `tutorial_completado_en`, `foto_actualizada_en` y tablas `preferencia_notificacion` y `foto_perfil`. Si ya tenías la BD en `0001`: `alembic upgrade head`. Hace falta `pip install -r requirements.txt` (nuevo: Pillow, python-multipart).
+
 ### Modificaciones al modelo del documento
 Ver `DECISIONES.md` y los docstrings de cada `models.py`. Resumen: se agregó `materia.nombre_normalizado` y dos restricciones únicas (soporte de RF-10/RF-11); no se crearon `usuario.auth_uid`, `tarea.progreso`, `tarea.veces_pospuesta`, `tarea.fecha_programada` ni los FK de historial a notificación/sesión de enfoque (pertenecen a requerimientos posteriores).
 
@@ -82,5 +93,7 @@ flutter run -d chrome --dart-define=API_BASE_URL=http://localhost:8000        # 
 - Con **teléfono físico**: usa la IP de tu computadora (`http://192.168.x.x:8000`) y arranca el backend con `uvicorn app.main:app --host 0.0.0.0`.
 - La API usa HTTP sin cifrar en desarrollo: en `android/app/src/main/AndroidManifest.xml` agrega `android:usesCleartextTraffic="true"` en `<application>` (solo para desarrollo).
 - `flutter_secure_storage` 9.x requiere `minSdkVersion` 18 o superior (en `android/app/build.gradle`).
-- Pantallas: inicio de sesión, registro, Inicio, Tareas (filtros), crear/editar tarea, detalle, Calendario básico y Perfil.
+- Pantallas: inicio de sesión, registro, **Personalización inicial**, **Tutorial**, Inicio, Tareas (filtros), crear/editar tarea, detalle, Calendario básico y **Perfil** (foto, nombre, idioma, notificaciones, tema, cerrar sesión).
+- Idiomas (ES/EN): todos los textos están en `lib/l10n/textos.dart` (cada texto lleva sus dos traducciones juntas). Para un idioma nuevo: agregarlo a `idiomasSoportados` y traducir cada texto. Los datos del usuario (títulos, materias) no se traducen.
+- Foto de perfil con `image_picker`: tras actualizar el repo ejecuta `flutter pub get`. En iOS ya se agregaron los textos de permiso a `Info.plist`.
 - Pendiente tras compilar: probar el flujo completo contra el backend (registro → login → crear materia/tarea → filtrar → editar → eliminar → cerrar sesión → reabrir app).

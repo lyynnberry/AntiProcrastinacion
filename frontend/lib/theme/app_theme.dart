@@ -1,64 +1,67 @@
 import 'package:flutter/material.dart';
 
-/// Paleta de la app. Los cinco colores base vienen del diseño; el resto son neutros derivados
-/// de ellos (fondos, bordes y texto) para que la interfaz se vea limpia y legible.
+/// Paleta de la app. Los cinco colores base vienen del diseño y se usan solo como ACENTOS;
+/// los fondos son neutros (blancos y grises cálidos con un degradado muy suave).
 ///
 /// ── TEMA CLARO (predeterminado) ───────────────────────────────────────────────
-/// [verdeClaro] #DFEAA6  Elemento seleccionado: pestaña activa, día elegido en el calendario,
-///                       opción activa de los selectores, estado "En progreso", avatar.
 /// [verde]      #96B23C  Acción principal: botones (Entrar, Crear cuenta, Guardar, Marcar como
-///                       completada), botón flotante "Nueva tarea" y estado "Completada".
-/// [verdeOscuro]#628D3D  Detalles de interacción: botón al presionarlo, borde del campo
-///                       enfocado, indicador de carga, marca "hoy" y puntos del calendario.
-/// [rosa]       #F2CEDD  Atención: estado "Vencida" y su tarjeta en el resumen de Inicio.
-/// [marron]     #665048  Texto, íconos, bordes de botones secundarios y barra de mensajes.
-/// ── Derivados claros ──────────────────────────────────────────────────────────
-/// [fondoClaro] #FBFCF5  Fondo de todas las pantallas.     [blanco]      #FFFFFF  Campos y listas.
-/// [bordeClaro] #E4E8D0  Líneas y divisores.               [tintaClaro]  #2B2421  Texto sobre el verde.
+///                       completada), opción activa de la barra inferior, anillo de progreso,
+///                       estado "Completada" y prioridad "Baja".
+/// [verdeClaro] #DFEAA6  Etiquetas pequeñas: estado "En progreso" y prioridad "Baja".
+/// [verdeOscuro]#628D3D  Botón presionado, borde del campo enfocado, indicador de carga,
+///                       marca de "hoy" y puntos de tareas en el calendario.
+/// [rosa]       #F2CEDD  Estado "Vencida", prioridad "Alta", avatar y toque de color del fondo.
+/// [marron]     #665048  Texto, íconos y bordes de botones secundarios.
+/// ── Neutros derivados (fondos) ────────────────────────────────────────────────
+/// [fondoClaro] #F4F1EF  Fondo base.  Degradado: [degradadoClaro] rosa muy suave → gris cálido
+///                       → gris lavanda, igual en todas las pantallas.
+/// [blanco]     #FFFFFF  Tarjetas y campos.        [bordeClaro]  #E9E4E1  Líneas finas.
+/// [tintaClaro] #2B2421  Tarjeta de progreso, barra inferior y botones circulares; también el
+///                       texto sobre el verde de los botones.
 /// [errorClaro] #B3423A  Errores de formulario y acción de eliminar.
 ///
 /// ── TEMA OSCURO (misma paleta, otros tonos) ───────────────────────────────────
-/// [oscFondo]  #1F1A18  Fondo (marrón muy oscuro, de #665048).   [oscSuperficie] #2B2421  Campos y listas.
-/// [oscVerde]  #A9C34A  Botones y botón flotante (#96B23C más luminoso).
-/// [oscVerde2] #7FB052  Botón presionado, foco, carga, "hoy" (#628D3D más claro).
-/// [oscSeleccion] #424D26 Elemento seleccionado y "En progreso" (#DFEAA6 en tono profundo).
-/// [oscRosaFondo] #4A3A42 Estado "Vencida" (#F2CEDD apagado); su texto usa [rosa].
-/// [oscTexto]  #E9F0C4  Texto principal (#DFEAA6 suavizado).
-/// [oscBorde]  #3E3430  Líneas y divisores.   [oscError] #E8837A  Errores.
+/// [oscFondo]  #1F1A18  Fondo base (degradado [degradadoOscuro]).  [oscSuperficie] #2B2425 Tarjetas.
+/// [oscTarjetaOscura] #100D0D  Tarjeta de progreso.   [oscVerde] #A9C34A  Botones y activos.
+/// [oscVerde2] #7FB052  Botón presionado, foco, "hoy".  [oscRosaFondo] #4A3A42  "Vencida" y "Alta".
+/// [oscTexto]  #F1EAE6  Texto principal.   [oscBorde] #3A3230  Líneas.   [oscError] #E8837A  Errores.
 class Paleta {
   Paleta._();
 
-  // Base (tema claro)
+  // Base (acentos)
   static const verdeClaro = Color(0xFFDFEAA6);
   static const verde = Color(0xFF96B23C);
   static const verdeOscuro = Color(0xFF628D3D);
   static const rosa = Color(0xFFF2CEDD);
   static const marron = Color(0xFF665048);
 
-  // Derivados del tema claro
-  static const fondoClaro = Color(0xFFFBFCF5);
+  // Neutros del tema claro
+  static const fondoClaro = Color(0xFFF4F1EF);
   static const blanco = Color(0xFFFFFFFF);
-  static const bordeClaro = Color(0xFFE4E8D0);
-  static const campoClaro = Color(0xFFBFC6A0);
+  static const bordeClaro = Color(0xFFE9E4E1);
+  static const campoClaro = Color(0xFFCFC8C3);
   static const marronSuave = Color(0xFF7A665D);
   static const tintaClaro = Color(0xFF2B2421);
   static const errorClaro = Color(0xFFB3423A);
-  static const neutroClaro = Color(0xFFEEF0E0);
+  static const neutroClaro = Color(0xFFEFEBE8);
+  static const degradadoClaro = [Color(0xFFF8E6EC), Color(0xFFF4F1EF), Color(0xFFE9E6F0)];
 
   // Tema oscuro
   static const oscFondo = Color(0xFF1F1A18);
-  static const oscSuperficie = Color(0xFF2B2421);
-  static const oscBorde = Color(0xFF3E3430);
-  static const oscCampo = Color(0xFF5A4C46);
+  static const oscSuperficie = Color(0xFF2B2425);
+  static const oscTarjetaOscura = Color(0xFF100D0D);
+  static const oscBorde = Color(0xFF3A3230);
+  static const oscCampo = Color(0xFF54484A);
   static const oscVerde = Color(0xFFA9C34A);
   static const oscVerde2 = Color(0xFF7FB052);
   static const oscSeleccion = Color(0xFF424D26);
   static const oscRosaFondo = Color(0xFF4A3A42);
   static const oscRosa = Color(0xFFE8B8CD);
-  static const oscTexto = Color(0xFFE9F0C4);
-  static const oscTextoSuave = Color(0xFFC4BFAA);
-  static const oscNeutro = Color(0xFF352C28);
+  static const oscTexto = Color(0xFFF1EAE6);
+  static const oscTextoSuave = Color(0xFFBDB3AD);
+  static const oscNeutro = Color(0xFF352D2D);
   static const oscError = Color(0xFFE8837A);
+  static const degradadoOscuro = [Color(0xFF2B2025), Color(0xFF1C1819), Color(0xFF1F1D26)];
 }
 
 const _esquemaClaro = ColorScheme(
@@ -86,15 +89,15 @@ const _esquemaClaro = ColorScheme(
   outlineVariant: Paleta.bordeClaro,
   shadow: Colors.black,
   scrim: Colors.black,
-  inverseSurface: Paleta.marron,
-  onInverseSurface: Paleta.fondoClaro,
+  inverseSurface: Paleta.tintaClaro,
+  onInverseSurface: Paleta.blanco,
   inversePrimary: Paleta.verdeClaro,
   surfaceTint: Colors.transparent,
   surfaceContainerLowest: Paleta.blanco,
-  surfaceContainerLow: Color(0xFFF6F8EC),
-  surfaceContainer: Color(0xFFF1F4E3),
+  surfaceContainerLow: Color(0xFFF7F4F2),
+  surfaceContainer: Color(0xFFF1EEEC),
   surfaceContainerHigh: Paleta.blanco,
-  surfaceContainerHighest: Color(0xFFEAEED9),
+  surfaceContainerHighest: Paleta.bordeClaro,
 );
 
 const _esquemaOscuro = ColorScheme(
@@ -127,9 +130,9 @@ const _esquemaOscuro = ColorScheme(
   inversePrimary: Paleta.verde,
   surfaceTint: Colors.transparent,
   surfaceContainerLowest: Paleta.oscSuperficie,
-  surfaceContainerLow: Color(0xFF241E1B),
+  surfaceContainerLow: Color(0xFF241E1F),
   surfaceContainer: Paleta.oscSuperficie,
-  surfaceContainerHigh: Color(0xFF352C28),
+  surfaceContainerHigh: Color(0xFF352D2D),
   surfaceContainerHighest: Paleta.oscBorde,
 );
 
@@ -150,7 +153,7 @@ ThemeData construirTema(Brightness brillo) {
     labelLarge: peso(base.labelLarge, FontWeight.w600),
   );
 
-  final forma = RoundedRectangleBorder(borderRadius: BorderRadius.circular(14));
+  final forma = RoundedRectangleBorder(borderRadius: BorderRadius.circular(28));
   final estadoPresionado = <WidgetState>{
     WidgetState.pressed,
     WidgetState.hovered,
@@ -172,7 +175,7 @@ ThemeData construirTema(Brightness brillo) {
     filledButtonTheme: FilledButtonThemeData(
       style: ButtonStyle(
         elevation: const WidgetStatePropertyAll(0),
-        minimumSize: const WidgetStatePropertyAll(Size(64, 50)),
+        minimumSize: const WidgetStatePropertyAll(Size(64, 54)),
         shape: WidgetStatePropertyAll(forma),
         textStyle: const WidgetStatePropertyAll(
             TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
@@ -192,7 +195,7 @@ ThemeData construirTema(Brightness brillo) {
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: ButtonStyle(
-        minimumSize: const WidgetStatePropertyAll(Size(64, 50)),
+        minimumSize: const WidgetStatePropertyAll(Size(64, 54)),
         shape: WidgetStatePropertyAll(forma),
         foregroundColor: WidgetStatePropertyAll(esquema.onSurface),
         textStyle: const WidgetStatePropertyAll(
@@ -213,35 +216,6 @@ ThemeData construirTema(Brightness brillo) {
         textStyle: const WidgetStatePropertyAll(
             TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
       ),
-    ),
-    floatingActionButtonTheme: FloatingActionButtonThemeData(
-      backgroundColor: esquema.primary,
-      foregroundColor: esquema.onPrimary,
-      elevation: 0,
-      focusElevation: 0,
-      hoverElevation: 0,
-      highlightElevation: 0,
-      shape: const StadiumBorder(),
-    ),
-    navigationBarTheme: NavigationBarThemeData(
-      backgroundColor: esquema.surface,
-      surfaceTintColor: Colors.transparent,
-      elevation: 0,
-      height: 68,
-      indicatorColor: esquema.primaryContainer,
-      labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-      iconTheme: WidgetStateProperty.resolveWith((estados) => IconThemeData(
-          size: 24,
-          color: estados.contains(WidgetState.selected)
-              ? esquema.onPrimaryContainer
-              : esquema.onSurfaceVariant)),
-      labelTextStyle: WidgetStateProperty.resolveWith((estados) => TextStyle(
-          fontSize: 12,
-          fontWeight:
-              estados.contains(WidgetState.selected) ? FontWeight.w600 : FontWeight.w500,
-          color: estados.contains(WidgetState.selected)
-              ? esquema.onSurface
-              : esquema.onSurfaceVariant)),
     ),
     segmentedButtonTheme: SegmentedButtonThemeData(
       style: ButtonStyle(
@@ -264,7 +238,7 @@ ThemeData construirTema(Brightness brillo) {
       backgroundColor: esquema.inverseSurface,
       contentTextStyle: TextStyle(color: esquema.onInverseSurface, fontSize: 14),
       elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
     ),
   );
 }
@@ -306,5 +280,63 @@ EstiloEstado estiloEstado(BuildContext context, String estado) {
               fondo: Paleta.oscNeutro, texto: Paleta.oscTexto, punto: Paleta.oscTextoSuave)
           : const EstiloEstado(
               fondo: Paleta.neutroClaro, texto: Paleta.marron, punto: Paleta.marronSuave);
+  }
+}
+
+/// Colores de la etiqueta de prioridad (borde + fondo suave + punto).
+class EstiloPrioridad {
+  const EstiloPrioridad({
+    required this.fondo,
+    required this.borde,
+    required this.texto,
+    required this.punto,
+  });
+
+  final Color fondo;
+  final Color borde;
+  final Color texto;
+  final Color punto;
+}
+
+/// Baja = verde, Media = ámbar, Alta = rosa. Siempre acompañadas de texto.
+EstiloPrioridad estiloPrioridad(BuildContext context, String prioridad) {
+  final oscuro = Theme.of(context).brightness == Brightness.dark;
+  switch (prioridad) {
+    case 'ALTA':
+      return oscuro
+          ? const EstiloPrioridad(
+              fondo: Paleta.oscRosaFondo,
+              borde: Color(0xFFC9738D),
+              texto: Paleta.rosa,
+              punto: Paleta.oscError)
+          : const EstiloPrioridad(
+              fondo: Paleta.rosa,
+              borde: Color(0xFFDB8FA8),
+              texto: Paleta.marron,
+              punto: Paleta.errorClaro);
+    case 'MEDIA':
+      return oscuro
+          ? const EstiloPrioridad(
+              fondo: Color(0xFF4D3F2A),
+              borde: Color(0xFFD9A45B),
+              texto: Paleta.oscTexto,
+              punto: Color(0xFFE0AE62))
+          : const EstiloPrioridad(
+              fondo: Color(0xFFFBE6C8),
+              borde: Color(0xFFE3A857),
+              texto: Paleta.marron,
+              punto: Color(0xFFC9822A));
+    default: // BAJA
+      return oscuro
+          ? const EstiloPrioridad(
+              fondo: Paleta.oscSeleccion,
+              borde: Paleta.oscVerde,
+              texto: Paleta.oscTexto,
+              punto: Paleta.oscVerde)
+          : const EstiloPrioridad(
+              fondo: Paleta.verdeClaro,
+              borde: Paleta.verde,
+              texto: Paleta.marron,
+              punto: Paleta.verdeOscuro);
   }
 }
