@@ -5,5 +5,14 @@ Al agregar un módulo nuevo con tablas (por ejemplo notificaciones), se importa 
 from app.modules.auth.models import SesionAutenticacion  # noqa: F401
 from app.modules.historial.models import HistorialEvento  # noqa: F401
 from app.modules.materias.models import Materia  # noqa: F401
+from app.modules.notificaciones.models import Notificacion  # noqa: F401
 from app.modules.tareas.models import Tarea  # noqa: F401
 from app.modules.usuarios.models import FotoPerfil, PreferenciaNotificacion, Usuario  # noqa: F401
+from app.modules.gamificacion.models import (  # noqa: F401
+    DiaRacha,
+    Logro,
+    LogroUsuario,
+    PerfilGamificacion,
+    RecuperacionRacha,
+    TransaccionGamificacion,
+)

@@ -6,10 +6,11 @@ import '../state/servicios.dart';
 import '../theme/app_theme.dart';
 import '../widgets/avatar.dart';
 import '../widgets/comunes.dart';
+import 'progreso_screen.dart';
 import 'tarea_detalle_screen.dart';
 import 'tarea_form_screen.dart';
 
-/// Inicio: resumen simple de las tareas del usuario (solo datos de RF-04 a RF-09, sin gamificación).
+/// Inicio: resumen de las tareas del usuario (RF-04 a RF-09) y tarjeta de racha (RF-21/RF-26) que abre Progreso.
 class InicioScreen extends StatefulWidget {
   const InicioScreen({super.key});
 
@@ -19,14 +20,19 @@ class InicioScreen extends StatefulWidget {
 
 class _InicioScreenState extends State<InicioScreen> {
   late Future<List<Tarea>> _futuro;
+  late Future<ProgresoGamificacion> _progreso;
 
   @override
   void initState() {
     super.initState();
     _futuro = tareasRepo.listar();
+    _progreso = gamificacionRepo.progreso();
   }
 
-  void _recargar() => setState(() => _futuro = tareasRepo.listar());
+  void _recargar() => setState(() {
+        _futuro = tareasRepo.listar();
+        _progreso = gamificacionRepo.progreso();
+      });
 
   /// Para el gesto de "tirar para actualizar": el indicador espera a que termine la consulta.
   Future<void> _actualizar() async {
@@ -106,6 +112,20 @@ class _InicioScreenState extends State<InicioScreen> {
                 Text(context.t.lemaLinea2,
                     style: tema.textTheme.headlineMedium?.copyWith(height: 1.15)),
                 const SizedBox(height: 24),
+                // La racha es complementaria: si no carga, Inicio se muestra igual sin la tarjeta.
+                FutureBuilder<ProgresoGamificacion>(
+                  future: _progreso,
+                  builder: (context, snapProgreso) {
+                    if (!snapProgreso.hasData) return const SizedBox.shrink();
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 16),
+                      child: TarjetaRacha(
+                        progreso: snapProgreso.data!,
+                        onTap: () => _abrir(const ProgresoScreen()),
+                      ),
+                    );
+                  },
+                ),
                 cuerpo,
               ],
             ),

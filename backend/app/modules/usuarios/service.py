@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from app.core.errors import NoEncontrado
+from app.modules.notificaciones.service import NotificacionService
 from app.modules.usuarios.imagen import TIPO_SALIDA, procesar_foto
 from app.modules.usuarios.models import FotoPerfil, PreferenciaNotificacion, Usuario
 from app.modules.usuarios.repository import UsuarioRepository
@@ -29,8 +30,10 @@ class PerfilService:
         campos = datos.model_fields_set
         if "nombre" in campos:
             usuario.nombre = datos.nombre  # None borra el nombre; el esquema ya lo normalizó
-        if "idioma" in campos and datos.idioma is not None:
+        if "idioma" in campos and datos.idioma is not None and datos.idioma != usuario.idioma:
             usuario.idioma = datos.idioma
+            # Los avisos pendientes se regeneran en el nuevo idioma (RF-12 regla 3).
+            NotificacionService(self.db).replanificar(usuario, _ahora())
         self.db.commit()
         self.db.refresh(usuario)
         return usuario
@@ -53,6 +56,9 @@ class PerfilService:
         )
         if usuario.personalizacion_completada_en is None:
             usuario.personalizacion_completada_en = _ahora()
+        self.db.flush()
+        # RF-12 regla 6 / RF-13: el perfil cambia los intervalos; desactivar cancela los avisos programados.
+        NotificacionService(self.db).replanificar(usuario, _ahora())
         self.db.commit()
         self.db.refresh(pref)
         return pref

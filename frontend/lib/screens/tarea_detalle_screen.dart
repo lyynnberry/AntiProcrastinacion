@@ -6,7 +6,8 @@ import '../state/servicios.dart';
 import '../widgets/comunes.dart';
 import 'tarea_form_screen.dart';
 
-/// Detalle de una tarea (RF-07) con acciones de editar (RF-05) y eliminar (RF-06).
+/// Detalle de una tarea (RF-07) con acciones de editar (RF-05) y eliminar (RF-06),
+/// y la lista de sus próximos recordatorios (RF-12 / RF-13).
 class TareaDetalleScreen extends StatefulWidget {
   const TareaDetalleScreen({super.key, required this.idTarea});
 
@@ -40,7 +41,15 @@ class _TareaDetalleScreenState extends State<TareaDetalleScreen> {
         // Se omite el nombre de la materia; el resto de la tarea sigue siendo válido.
       }
     }
-    return _Datos(tarea, nombreMateria);
+    // Los recordatorios son informativos: si fallan, la tarea se muestra igual.
+    List<Recordatorio>? recordatorios;
+    try {
+      final todos = await notificacionesRepo.sincronizar();
+      recordatorios = todos.where((r) => r.idTarea == tarea.id).toList();
+    } catch (_) {
+      recordatorios = null;
+    }
+    return _Datos(tarea, nombreMateria, recordatorios);
   }
 
   void _recargar() => setState(() => _futuro = _cargar());
@@ -143,6 +152,10 @@ class _TareaDetalleScreenState extends State<TareaDetalleScreen> {
                           (t.descripcion?.isNotEmpty ?? false) ? t.descripcion! : '—'),
                       const Divider(),
                       _Fila(context.t.fechaLimite, context.t.fechaHora(t.fechaLimite)),
+                      if (t.fechaProgramada != null) ...[
+                        const Divider(),
+                        _Fila(context.t.fechaProgramada, context.t.fecha(t.fechaProgramada!)),
+                      ],
                       const Divider(),
                       _Fila(context.t.materia, datos.nombreMateria ?? context.t.sinMateria),
                       if (t.fechaCompletada != null) ...[
@@ -158,6 +171,8 @@ class _TareaDetalleScreenState extends State<TareaDetalleScreen> {
                       icon: const Icon(Icons.check),
                       label: Text(context.t.marcarCompletada),
                     ),
+                  const SizedBox(height: 24),
+                  _SeccionRecordatorios(recordatorios: datos.recordatorios),
                 ],
               ),
             );
@@ -169,10 +184,59 @@ class _TareaDetalleScreenState extends State<TareaDetalleScreen> {
 }
 
 class _Datos {
-  _Datos(this.tarea, this.nombreMateria);
+  _Datos(this.tarea, this.nombreMateria, this.recordatorios);
 
   final Tarea tarea;
   final String? nombreMateria;
+
+  /// null = no se pudieron cargar.
+  final List<Recordatorio>? recordatorios;
+}
+
+/// Próximos avisos de la tarea, tal como los planificó el backend (RF-12 / RF-13).
+class _SeccionRecordatorios extends StatelessWidget {
+  const _SeccionRecordatorios({required this.recordatorios});
+
+  final List<Recordatorio>? recordatorios;
+
+  @override
+  Widget build(BuildContext context) {
+    final tema = Theme.of(context);
+    final lista = recordatorios;
+    final Widget contenido;
+    if (lista == null) {
+      contenido = Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Text(context.t.recordatoriosNoDisponibles, style: tema.textTheme.bodyMedium),
+      );
+    } else if (lista.isEmpty) {
+      contenido = Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Text(context.t.sinRecordatorios, style: tema.textTheme.bodyMedium),
+      );
+    } else {
+      contenido = Column(children: [
+        for (var i = 0; i < lista.length; i++) ...[
+          if (i > 0) const Divider(),
+          _Fila(
+            context.t.tipoRecordatorio(lista[i].tipo, esFinal: lista[i].esAvisoFinal),
+            context.t.fechaHora(lista[i].fechaProgramada),
+          ),
+        ],
+      ]);
+    }
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(context.t.proximosRecordatorios, style: tema.textTheme.titleSmall),
+      const SizedBox(height: 4),
+      Text(context.t.recordatoriosAviso,
+          style: tema.textTheme.bodySmall?.copyWith(color: tema.colorScheme.onSurfaceVariant)),
+      const SizedBox(height: 8),
+      Superficie(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: contenido,
+      ),
+    ]);
+  }
 }
 
 class _Fila extends StatelessWidget {

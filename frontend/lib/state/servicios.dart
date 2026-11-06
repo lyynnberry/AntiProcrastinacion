@@ -13,4 +13,6 @@ final idiomaController = IdiomaController(const FlutterSecureStorage());
 final authController = AuthController(apiClient, idiomaController);
 final tareasRepo = TareasRepository(apiClient);
 final materiasRepo = MateriasRepository(apiClient);
+final notificacionesRepo = NotificacionesRepository(apiClient);
+final gamificacionRepo = GamificacionRepository(apiClient);
 final temaController = TemaController(const FlutterSecureStorage());

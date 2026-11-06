@@ -61,6 +61,21 @@ class Textos {
         'FOTO_FORMATO_INVALIDO' =>
           _t('Formato no permitido. Usa una imagen JPG, PNG o WebP.', 'Unsupported format. Use a JPG, PNG or WebP image.'),
         'FOTO_DEMASIADO_GRANDE' => _t('La imagen supera el máximo de 5 MB.', 'The image is larger than 5 MB.'),
+        'FECHA_TAREA_COMPLETADA' => _t('Una tarea completada no puede cambiar su fecha límite. Reábrela primero.',
+            'A completed task cannot change its due date. Reopen it first.'),
+        'FECHA_PROGRAMADA_INVALIDA' => _t('El día programado debe estar entre hoy y el día de la fecha límite.',
+            'The scheduled day must be between today and the due date.'),
+        'FECHA_PROGRAMADA_NO_EDITABLE' => _t('El día programado ya llegó: no se puede cambiar.',
+            'The scheduled day has already arrived and cannot be changed.'),
+        'SIN_PROTECCIONES' => _t('No tienes protecciones de racha disponibles.', 'You have no streak shields available.'),
+        'NADA_QUE_PROTEGER' => _t('No hay un incumplimiento reciente que haya roto tu racha.',
+            'There is no recent missed day that broke your streak.'),
+        'PROTECCION_YA_USADA' => _t('Ese día ya fue protegido.', 'That day is already protected.'),
+        'RECUPERACION_ACTIVA' => _t('Ya tienes una recuperación en curso.', 'You already have a recovery in progress.'),
+        'SIN_RACHA_PERDIDA' => _t('No tienes una racha perdida que se pueda recuperar.',
+            'You have no lost streak that can be recovered.'),
+        'RECUPERACION_NO_ENCONTRADA' => _t('Recuperación no encontrada.', 'Recovery not found.'),
+        'RECUPERACION_NO_ACTIVA' => _t('La recuperación ya terminó.', 'The recovery has already ended.'),
         _ => null,
       };
 
@@ -187,6 +202,75 @@ class Textos {
   String get fechaLimite => _t('Fecha límite', 'Due date');
   String get completadaEl => _t('Completada el', 'Completed on');
   String get marcarCompletada => _t('Marcar como completada', 'Mark as completed');
+
+  // ───────────── Recordatorios (RF-12 / RF-13) ─────────────
+  String get proximosRecordatorios => _t('Próximos recordatorios', 'Upcoming reminders');
+  String get sinRecordatorios =>
+      _t('No hay recordatorios programados para esta tarea.', 'There are no reminders scheduled for this task.');
+  String get recordatoriosNoDisponibles =>
+      _t('No se pudieron cargar los recordatorios.', 'Reminders could not be loaded.');
+  String get recordatoriosAviso => _t('Se avisará más seguido conforme se acerque la fecha límite.',
+      'Reminders get more frequent as the due date gets closer.');
+  String tipoRecordatorio(String tipo, {bool esFinal = false}) {
+    if (esFinal) return _t('Última hora', 'Last hour');
+    return switch (tipo) {
+      'RECORDATORIO' => _t('Recordatorio', 'Reminder'),
+      'URGENTE' => _t('Urgente', 'Urgent'),
+      'CRITICA' => _t('Crítico', 'Critical'),
+      'CORRECTIVA' => _t('Tarea vencida', 'Overdue task'),
+      _ => tipo,
+    };
+  }
+  String get fechaProgramada => _t('Día comprometido', 'Committed day');
+
+  // ───────────── Gamificación (RF-21 a RF-27) ─────────────
+  String get progreso => _t('Progreso', 'Progress');
+  String get racha => _t('Racha', 'Streak');
+  String get rachaMaxima => _t('Racha máxima', 'Best streak');
+  String dias(int n) => esEn ? (n == 1 ? '$n day' : '$n days') : (n == 1 ? '$n día' : '$n días');
+  String get puntos => _t('Puntos', 'Points');
+  String nivel(int n) => _t('Nivel $n', 'Level $n');
+  String get nivelEtiqueta => _t('Nivel', 'Level');
+  String get protecciones => _t('Protecciones', 'Shields');
+  String hoyCompromisos(int cumplidas, int total) => total == 0
+      ? _t('Hoy no tienes tareas comprometidas.', 'You have no tasks committed for today.')
+      : _t('Hoy: $cumplidas de $total tareas cumplidas a tiempo.', 'Today: $cumplidas of $total tasks done on time.');
+  String get verProgreso => _t('Ver progreso y logros', 'See progress and achievements');
+  String get logros => _t('Logros', 'Achievements');
+  String get logrosObtenidos => _t('Obtenidos', 'Unlocked');
+  String get logrosPorObtener => _t('Por obtener', 'In progress');
+  String get sinLogros => _t('Aún no tienes logros. ¡Completa tareas a tiempo!', 'No achievements yet. Complete tasks on time!');
+  String puntosRecompensa(int n) => _t('+$n pts', '+$n pts');
+  String categoriaLogro(String c) => switch (c) {
+        'RACHA' => _t('Racha', 'Streak'),
+        'VELOCIDAD' => _t('Velocidad', 'Speed'),
+        'PRODUCTIVIDAD' => _t('Productividad', 'Productivity'),
+        'CONSTANCIA' => _t('Constancia', 'Consistency'),
+        _ => c,
+      };
+  String get proteccionTitulo => _t('Proteger tu racha', 'Protect your streak');
+  String proteccionTexto(DateTime dia, int racha) => _t(
+      'El ${fecha(dia)} no cumpliste tus tareas. Usa una protección para conservar tu racha de ${dias(racha)}.',
+      'You missed your tasks on ${fecha(dia)}. Use a shield to keep your streak of ${dias(racha)}.');
+  String get usarProteccion => _t('Usar protección', 'Use shield');
+  String get proteccionConfirmar => _t('Se gastará una protección. ¿Continuar?', 'One shield will be spent. Continue?');
+  String get proteccionUsada => _t('Racha protegida.', 'Streak protected.');
+  String get recuperacionTitulo => _t('Recuperar tu racha', 'Recover your streak');
+  String get recuperacionTexto => _t(
+      'Completa las tareas que quedaron pendientes y no incumplas ningún día durante el periodo de recuperación.',
+      'Complete the tasks you missed and do not miss any day during the recovery period.');
+  String get iniciarRecuperacion => _t('Iniciar recuperación', 'Start recovery');
+  String get cancelarRecuperacion => _t('Cancelar recuperación', 'Cancel recovery');
+  String get cancelarRecuperacionConfirmar =>
+      _t('Si cancelas, ya no podrás recuperar esta racha. ¿Continuar?', 'If you cancel, you cannot recover this streak. Continue?');
+  String recuperacionEnCurso(int racha) =>
+      _t('Recuperando una racha de ${dias(racha)}', 'Recovering a streak of ${dias(racha)}');
+  String recuperacionAvance(int hechas, int total, int restantes) => _t(
+      'Tareas atendidas: $hechas de $total · Quedan ${dias(restantes)}',
+      'Tasks done: $hechas of $total · ${dias(restantes)} left');
+  String get recuperacionIniciada => _t('Recuperación iniciada.', 'Recovery started.');
+  String get recuperacionCancelada => _t('Recuperación cancelada.', 'Recovery cancelled.');
+  String get progresoNoDisponible => _t('No se pudo cargar tu progreso.', 'Your progress could not be loaded.');
   String get editarTarea => _t('Editar tarea', 'Edit task');
   String get horaLimite => _t('Hora límite', 'Due time');
   String get nuevaMateria => _t('Nueva materia', 'New subject');

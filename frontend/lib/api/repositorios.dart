@@ -73,3 +73,36 @@ class MateriasRepository {
   Future<Materia> crear(String nombre) async =>
       Materia.fromJson(await _api.post('/materias', body: {'nombre': nombre}) as Map<String, dynamic>);
 }
+
+/// RF-12 / RF-13. El backend genera y escala los avisos; la app solo los consulta.
+class NotificacionesRepository {
+  NotificacionesRepository(this._api);
+
+  final ApiClient _api;
+
+  /// Pide al backend el plan vigente (lo actualiza antes de responder) y lo devuelve ordenado por hora.
+  /// Cuando se integre el aviso del sistema operativo, esta lista REEMPLAZARÁ todos los avisos locales.
+  Future<List<Recordatorio>> sincronizar() async {
+    final datos = await _api.post('/notificaciones/sincronizar') as List<dynamic>;
+    return datos.map((e) => Recordatorio.fromJson(e as Map<String, dynamic>)).toList();
+  }
+}
+
+/// RF-21 a RF-27. El backend calcula todo con el usuario de la sesión; la app nunca envía un id de usuario.
+class GamificacionRepository {
+  GamificacionRepository(this._api);
+
+  final ApiClient _api;
+
+  Future<ProgresoGamificacion> progreso() async =>
+      ProgresoGamificacion.fromJson(await _api.get('/gamificacion/progreso') as Map<String, dynamic>);
+
+  /// RF-24: devuelve el progreso actualizado.
+  Future<ProgresoGamificacion> usarProteccion() async => ProgresoGamificacion.fromJson(
+      await _api.post('/gamificacion/protecciones/usar') as Map<String, dynamic>);
+
+  /// RF-25.
+  Future<void> iniciarRecuperacion() => _api.post('/gamificacion/recuperaciones');
+
+  Future<void> cancelarRecuperacion(String id) => _api.post('/gamificacion/recuperaciones/$id/cancelar');
+}

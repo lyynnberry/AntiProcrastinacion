@@ -13,10 +13,11 @@ Notas de diseño:
 - Eliminación lógica (`fecha_eliminacion`): así el historial conserva su referencia a la tarea (RF-06 regla 5).
 """
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
@@ -69,5 +70,8 @@ class Tarea(Base):
     fecha_actualizacion: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+    # RF-21: día en que la persona se compromete explícitamente a hacerla (opcional, migración 0004).
+    # Si es NULL, el día comprometido es el día local de su fecha límite.
+    fecha_programada: Mapped[date | None] = mapped_column(Date)
     # Si tiene valor, la tarea está eliminada (RF-06).
     fecha_eliminacion: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

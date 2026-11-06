@@ -52,7 +52,7 @@ def limpiar_tablas(engine):
     yield
     with engine.begin() as conn:
         conn.execute(
-            text("TRUNCATE historial_evento, tarea, materia, sesion_autenticacion, foto_perfil, preferencia_notificacion, usuario CASCADE")
+            text("TRUNCATE transaccion_gamificacion, recuperacion_racha, logro_usuario, dia_racha, perfil_gamificacion, historial_evento, notificacion, tarea, materia, sesion_autenticacion, foto_perfil, preferencia_notificacion, usuario CASCADE")
         )
 
 
@@ -126,6 +126,8 @@ def insertar_tarea(db):
         prioridad: int = 2,
         estado: str = "PENDIENTE",
         id_materia: uuid.UUID | None = None,
+        fecha_programada=None,
+        fecha_completada: datetime | None = None,
     ) -> Tarea:
         ahora = datetime.now(timezone.utc)
         fecha_limite = fecha_limite or ahora + timedelta(days=1)
@@ -138,6 +140,8 @@ def insertar_tarea(db):
             fecha_creacion=fecha_creacion or ahora - timedelta(days=2),
             fecha_limite=fecha_limite,
             fecha_limite_original=fecha_limite,
+            fecha_programada=fecha_programada,
+            fecha_completada=fecha_completada,
         )
         db.add(tarea)
         db.commit()

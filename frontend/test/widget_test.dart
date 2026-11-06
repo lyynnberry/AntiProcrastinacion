@@ -2,6 +2,7 @@ import 'package:antiprocrastinacion/api/api_client.dart';
 import 'package:antiprocrastinacion/l10n/textos.dart';
 import 'package:antiprocrastinacion/models/modelos.dart';
 import 'package:antiprocrastinacion/screens/personalizacion_screen.dart';
+import 'package:antiprocrastinacion/screens/progreso_screen.dart';
 import 'package:antiprocrastinacion/screens/tutorial_screen.dart';
 import 'package:antiprocrastinacion/theme/app_theme.dart';
 import 'package:antiprocrastinacion/widgets/comunes.dart';
@@ -129,6 +130,36 @@ void main() {
       expect(u.personalizacionCompletada, isTrue);
       expect(u.tutorialCompletado, isFalse);
       expect(u.tieneFoto, isTrue);
+    });
+
+    test('Recordatorio.fromJson (RF-12/RF-13) lee tipo, nivel y hora local', () {
+      final r = Recordatorio.fromJson({
+        'id_notificacion': 'n1',
+        'id_tarea': 't1',
+        'tipo': 'CRITICA',
+        'nivel_intensidad': 3,
+        'mensaje': 'Falta 1 hora',
+        'requiere_accion': false,
+        'es_aviso_final': true,
+        'estado': 'PROGRAMADA',
+        'fecha_generacion': '2030-01-01T10:00:00Z',
+        'fecha_programada': '2030-01-01T11:00:00Z',
+        'fecha_envio': null,
+        'fecha_cancelacion': null,
+      });
+      expect(r.idTarea, 't1');
+      expect(r.nivel, 3);
+      expect(r.esAvisoFinal, isTrue);
+      expect(r.fechaProgramada.isUtc, isFalse);
+      expect(r.fechaProgramada.toUtc(), DateTime.utc(2030, 1, 1, 11));
+    });
+
+    test('tipos de recordatorio y error de fecha en tarea completada están traducidos', () {
+      expect(const Textos('es').tipoRecordatorio('URGENTE'), 'Urgente');
+      expect(const Textos('en').tipoRecordatorio('URGENTE'), 'Urgent');
+      expect(const Textos('es').tipoRecordatorio('CRITICA', esFinal: true), 'Última hora');
+      expect(const Textos('es').errorPorCodigo('FECHA_TAREA_COMPLETADA'), isNotNull);
+      expect(const Textos('en').errorPorCodigo('FECHA_TAREA_COMPLETADA'), isNot(const Textos('es').errorPorCodigo('FECHA_TAREA_COMPLETADA')));
     });
 
     test('Usuario.fromJson tolera respuestas sin los campos nuevos', () {
@@ -262,6 +293,129 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(elegido, 'PENDIENTE');
+    });
+  });
+
+  group('gamificación (RF-21 a RF-27)', () {
+    Map<String, dynamic> logroJson(String codigo, {bool desbloqueado = false, int actual = 1}) => {
+          'codigo': codigo,
+          'nombre': 'Logro $codigo',
+          'descripcion': 'Descripción $codigo',
+          'categoria': 'PRODUCTIVIDAD',
+          'tipo_condicion': 'TAREAS_A_TIEMPO',
+          'valor_condicion': 10,
+          'valor_actual': desbloqueado ? 10 : actual,
+          'progreso': desbloqueado ? 100 : actual * 10,
+          'recompensa_puntos': 30,
+          'desbloqueado': desbloqueado,
+          'fecha_desbloqueo': desbloqueado ? '2030-05-03T15:00:00Z' : null,
+        };
+
+    Map<String, dynamic> progresoJson({bool proteger = false, bool recuperar = false, bool activa = false}) => {
+          'racha_actual': 4,
+          'racha_maxima': 9,
+          'puntos_totales': 215,
+          'nivel': 2,
+          'protecciones_disponibles': proteger ? 1 : 0,
+          'ultima_fecha_evaluada': '2030-05-02',
+          'hoy': {'fecha': '2030-05-03', 'tareas_comprometidas': 3, 'tareas_cumplidas_a_tiempo': 1},
+          'tareas_a_tiempo': 12,
+          'logros_desbloqueados': [logroJson('A_TIEMPO_1', desbloqueado: true)],
+          'logros_pendientes': [logroJson('A_TIEMPO_50', actual: 3)],
+          'recuperacion_activa': activa
+              ? {
+                  'id_recuperacion': 'r1',
+                  'estado': 'ACTIVA',
+                  'racha_perdida': 6,
+                  'fecha_inicio': '2030-05-02',
+                  'fecha_fin_prevista': '2030-05-04',
+                  'tareas_atrasadas_total': 2,
+                  'tareas_atrasadas_completadas': 1,
+                  'dias_restantes': 2,
+                }
+              : null,
+          'puede_proteger': proteger ? {'fecha': '2030-05-02', 'racha_a_conservar': 7} : null,
+          'puede_recuperar': recuperar,
+        };
+
+    test('ProgresoGamificacion.fromJson lee todos los campos', () {
+      final p = ProgresoGamificacion.fromJson(progresoJson(proteger: true, activa: true));
+      expect([p.rachaActual, p.rachaMaxima, p.puntos, p.nivel, p.protecciones], [4, 9, 215, 2, 1]);
+      expect([p.hoyComprometidas, p.hoyCumplidas, p.tareasATiempo], [3, 1, 12]);
+      expect(p.logrosDesbloqueados.single.desbloqueado, isTrue);
+      expect(p.logrosPendientes.single.valorActual, 3);
+      expect(p.puedeProteger, isTrue);
+      expect(p.proteccionFecha, DateTime(2030, 5, 2));
+      expect(p.proteccionRacha, 7);
+      expect(p.recuperacion!.tareasCompletadas, 1);
+    });
+
+    test('Tarea lee la fecha programada opcional', () {
+      final base = {
+        'id_tarea': '1',
+        'titulo': 'T',
+        'prioridad': 'ALTA',
+        'estado': 'PENDIENTE',
+        'fecha_limite': '2030-05-03T15:00:00Z',
+      };
+      expect(Tarea.fromJson(base).fechaProgramada, isNull);
+      expect(Tarea.fromJson({...base, 'fecha_programada': '2030-05-02'}).fechaProgramada, DateTime(2030, 5, 2));
+    });
+
+    test('textos y errores de gamificación en ambos idiomas', () {
+      expect(const Textos('es').dias(1), '1 día');
+      expect(const Textos('en').dias(3), '3 days');
+      expect(const Textos('en').categoriaLogro('VELOCIDAD'), 'Speed');
+      for (final codigo in ['SIN_PROTECCIONES', 'NADA_QUE_PROTEGER', 'RECUPERACION_ACTIVA', 'SIN_RACHA_PERDIDA',
+          'FECHA_PROGRAMADA_INVALIDA', 'FECHA_PROGRAMADA_NO_EDITABLE']) {
+        expect(const Textos('es').errorPorCodigo(codigo), isNotNull, reason: codigo);
+        expect(const Textos('en').errorPorCodigo(codigo), isNot(const Textos('es').errorPorCodigo(codigo)), reason: codigo);
+      }
+    });
+
+    testWidgets('TarjetaRacha muestra racha, puntos, nivel y compromisos de hoy', (tester) async {
+      var tocada = false;
+      await tester.pumpWidget(_envolver(TarjetaRacha(
+        progreso: ProgresoGamificacion.fromJson(progresoJson()),
+        onTap: () => tocada = true,
+      )));
+      expect(find.text('Racha: 4 días'), findsOneWidget);
+      expect(find.text('215 puntos · Nivel 2'), findsOneWidget);
+      expect(find.text('Hoy: 1 de 3 tareas cumplidas a tiempo.'), findsOneWidget);
+      await tester.tap(find.byType(TarjetaRacha));
+      expect(tocada, isTrue);
+    });
+
+    testWidgets('Progreso: logros, protección disponible y su acción', (tester) async {
+      var usada = false;
+      await tester.pumpWidget(_envolver(ContenidoProgreso(
+        progreso: ProgresoGamificacion.fromJson(progresoJson(proteger: true)),
+        onUsarProteccion: () => usada = true,
+      )));
+      expect(find.text('Proteger tu racha'), findsOneWidget);
+      await tester.tap(find.text('Usar protección'));
+      expect(usada, isTrue);
+      await tester.scrollUntilVisible(find.text('Logro A_TIEMPO_50'), 200);
+      expect(find.text('Logro A_TIEMPO_1'), findsOneWidget);
+      expect(find.text('3 / 10'), findsOneWidget);
+    });
+
+    testWidgets('Progreso: recuperación disponible y recuperación en curso', (tester) async {
+      await tester.pumpWidget(_envolver(ContenidoProgreso(
+        progreso: ProgresoGamificacion.fromJson(progresoJson(recuperar: true)),
+        onIniciarRecuperacion: () {},
+      )));
+      expect(find.text('Iniciar recuperación'), findsOneWidget);
+
+      String? cancelada;
+      await tester.pumpWidget(_envolver(ContenidoProgreso(
+        progreso: ProgresoGamificacion.fromJson(progresoJson(activa: true)),
+        onCancelarRecuperacion: (id) => cancelada = id,
+      ), idioma: 'en'));
+      expect(find.text('Recovering a streak of 6 days'), findsOneWidget);
+      expect(find.text('Tasks done: 1 of 2 · 2 days left'), findsOneWidget);
+      await tester.tap(find.text('Cancel recovery'));
+      expect(cancelada, 'r1');
     });
   });
 

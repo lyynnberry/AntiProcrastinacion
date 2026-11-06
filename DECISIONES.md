@@ -52,3 +52,86 @@ Registro breve de lo adoptado. Etiquetas: **[DOC]** viene de la documentación (
 
 ## Fuera de alcance (no implementado a propósito)
 RF-12 a RF-33, Google Sign-In, límite de intentos de login, reutilización de refresh token revocado (detección), borrado/desactivación de materias.
+
+
+# RF-12, RF-13 y RF-32 (implementación, 2026-11-06)
+
+Base: las decisiones aprobadas de *Decisiones técnicas — RF-12 a RF-21* (§4 Notificaciones, §5.1, §5.2, §10, §11), guardadas en los archivos del proyecto (`knowledge/claude/DECISIONES.md`). Aquí solo se registra lo que se programó y lo que se tuvo que decidir al implementarlo.
+
+## Arquitectura (aplicada tal como estaba aprobada)
+- El backend **genera** los avisos y los guarda (`notificacion`, PROGRAMADA). La app los **recibe** con `POST /notificaciones/sincronizar` y los mostrará como notificaciones **locales**. Sin Firebase ni servidor 24/7.
+- **ENVIADA** = la hora ya pasó y el aviso estaba sincronizado con el dispositivo (`fecha_envio = fecha_programada`). Es una aproximación: no confirma que Android lo mostró. Al pasar a ENVIADA se registra `NOTIFICACION_ENVIADA` en el historial (RF-13 regla 5).
+- Un aviso cuya hora pasó **sin haberse sincronizado nunca** pasa a CANCELADA (no pudo llegar al teléfono). [DECISIÓN AL IMPLEMENTAR]
+- **El plugin de notificaciones del sistema operativo no se agregó todavía** (decisión de la autora, 2026-11-06): no se podía compilar Flutter en el entorno y un plugin nativo sin compilar ponía en riesgo la demo. La app ya consulta y muestra el plan en el detalle de cada tarea.
+
+## Cómo se recalcula el plan
+- `NotificacionService.replanificar(usuario, ahora)` deja en la BD exactamente los avisos futuros que corresponden: crea los nuevos, actualiza el texto de los que siguen (si cambió el título o el idioma) y **cancela** los que ya no aplican. Es **idempotente**.
+- Se llama dentro de la misma transacción que la operación que lo provoca: crear, editar (estado, fecha, título), eliminar, cambiar la preferencia o el idioma, y al sincronizar. Si la operación falla, el plan no cambia.
+- Antes de replanificar se bloquea la fila del usuario (`SELECT ... FOR UPDATE`) y la BD tiene un **índice único parcial** `(id_tarea, fecha_programada)` para estados no cancelados: no puede haber avisos duplicados ni con dos peticiones simultáneas.
+- **Horizonte de 7 días** (`notif_horizonte_horas`): solo se guardan avisos dentro de los próximos 7 días; el plan se extiende al sincronizar o con el proceso `python -m app.modules.notificaciones.procesos`. Así se cumple "con T > 7 días no se planifica ningún aviso todavía" sin APScheduler y sin superar el límite de avisos pendientes de iOS. [DECISIÓN AL IMPLEMENTAR]
+
+## Propuestas de §12 que se tomaron como valor por defecto (configurables, revisables)
+V6 no define estos valores. Estaban como [PROPUESTA]; se implementaron como parámetros en `core/config.py` para poder cambiarlos sin tocar la lógica:
+- **Alineación** hacia atrás desde la fecha límite (T − h, T − 2h, …).
+- **Silencio**: un aviso entre 22:00 y 07:00 locales pasa a las 07:00; si eso queda en o después de la fecha límite, a las 21:30 previas; si ya pasó, se descarta. El aviso T − 1 h **también respeta el silencio** (era el punto abierto).
+- **CORRECTIVA** (tarea vencida y abierta): 1 h después de vencer y luego a las 19:00 locales durante 3 días (Tranquilo: solo el primero).
+- No se implementó **IGNORADA** ni las respuestas (RESPONDIDA): son de RF-14. `requiere_accion` queda en `false` hasta RF-14.
+
+## Historial (RF-32)
+- Catálogo en `historial/tipos.py`: `TAREA_CREADA`, `TAREA_EDITADA`, `TAREA_ESTADO_CAMBIADO`, `TAREA_COMPLETADA`, `TAREA_REABIERTA`, `TAREA_POSPUESTA`, `TAREA_REPROGRAMADA`, `TAREA_ELIMINADA` y `NOTIFICACION_ENVIADA`.
+- Una edición genera `TAREA_EDITADA` (todos los cambios, como antes) **más** el evento específico del estado o de la fecha, como fija §5.1 punto 5. Nunca dos eventos del mismo tipo por operación.
+- **Reprogramación** (V6 no la distingue de posponer): `TAREA_POSPUESTA` si la tarea estaba abierta y no vencida y la fecha se movió a una posterior (§5.1); `TAREA_REPROGRAMADA` en cualquier otro cambio de fecha (adelantarla o mover una vencida). [DECISIÓN AL IMPLEMENTAR]
+- `TAREA_COMPLETADA` guarda `a_tiempo` (RF-12 regla 5: a tiempo si se completa antes o exactamente en la fecha límite). Se compara con la fecha límite vigente **antes** de la operación. [DECISIÓN AL IMPLEMENTAR]
+- `tarea.veces_pospuesta` (V6) **no se creó**: se puede derivar contando `TAREA_POSPUESTA`. Se agregará si RF-16 lo necesita como columna.
+- Consulta: `GET /tareas/{id}/historial` (solo el dueño; tarea eliminada → 404, pero sus eventos se conservan en la BD).
+
+## TAR-09 implementada (cambio visible en RF-05)
+Una tarea **COMPLETADA no puede cambiar su `fecha_limite`** (error 422 `FECHA_TAREA_COMPLETADA`); se permite si en la misma petición se reabre. Era una decisión aprobada (§5.2) y es necesaria para RF-13 reglas 6-7: una entrega con retraso no puede convertirse después en una "a tiempo".
+
+## Cambios en pruebas existentes
+Tres pruebas de `test_tareas.py` comprobaban que el historial quedaba vacío o con un solo evento. Desde RF-32 la creación también registra `TAREA_CREADA`, así que se ajustaron para no contar ese evento. No se eliminó ninguna prueba.
+
+## Relación con el parche `entregas/paso1_migracion_0003.patch`
+Se revisó y se reutilizó **solo la parte de notificaciones** (columnas, CHECK y FK compuestas). La migración `0003` del repositorio la reemplaza: si algún día se aplican las tablas de enfoque, gamificación o riesgo, deben ir en una migración `0004` nueva, no con ese parche (chocaría con la `0003` actual).
+
+# Gamificación RF-21 a RF-27 (implementación, 2026-11-06)
+
+Base: V6 RF-21 a RF-27 y las propuestas presentadas en el diagnóstico, **aprobadas por la autora** ("Aprobar todo y programar"). Todas las cifras son parámetros de `core/config.py` (prefijo `GAM_`). RF-28 a RF-31 quedan fuera a propósito.
+
+## Racha (RF-21)
+- **Día comprometido**: el de `tarea.fecha_programada` si existe; si no, el día local de `fecha_limite`. [PROPUESTA APROBADA]
+- `tarea.fecha_programada` (DATE, opcional) **se agregó** (antes figuraba como no creada): debe estar entre hoy y el día local de la fecha límite, y no se puede mover ni quitar cuando su día ya llegó (`FECHA_PROGRAMADA_INVALIDA`, `FECHA_PROGRAMADA_NO_EDITABLE`). Si se adelanta la fecha límite antes del día programado, se rechaza.
+- **Cumplida a tiempo**: completada en o antes de su límite y, si está programada, antes de que termine su día.
+- **Sin racha retroactiva**: el primer día evaluable es el día en que se crea el perfil de gamificación (primera consulta o primera tarea completada).
+- **Evaluación**: perezosa (cada consulta y cada tarea completada) + proceso diario opcional. Hoy nunca se evalúa; los días cerrados son inmutables (UNIQUE usuario + fecha).
+- **Antitrampa** [DECISIÓN AL IMPLEMENTAR]: una tarea pospuesta o reprogramada **durante** su día sigue contando para ese día con el límite que tenía; una tarea eliminada durante su día también, salvo que se haya creado ese mismo día (duplicado por error).
+- **Limitación conocida**: si una tarea se reabre después de medianoche y antes de que se evalúe el día, la evaluación ve la tarea reabierta. El proceso diario cerca de medianoche lo reduce.
+
+## Puntos y nivel (RF-22)
+- 10 puntos a tiempo, 0 con retraso; una sola vez por tarea (aunque se reabra); reabrir no resta. Nivel = 1 + puntos // 200.
+- Idempotencia: cada movimiento lleva `clave_idempotencia` con UNIQUE `(id_usuario, clave)`; además se bloquea la fila de `perfil_gamificacion` (SELECT … FOR UPDATE) en toda operación. Probado con dos hilos simultáneos.
+- Se ejecuta dentro de la transacción de la tarea: si algo falla, no queda ni el cambio de la tarea ni los puntos.
+
+## Logros (RF-23)
+- 12 logros iniciales: RACHA 3/7/30 (sobre la racha **máxima**, para que un logro alcanzado no se "pierda"), PRODUCTIVIDAD 1/10/50 tareas a tiempo, CONSTANCIA 100/500/1000 puntos, VELOCIDAD 1/5/20 tareas anticipadas.
+- **Extensión a V6**: tipo de condición `TAREAS_ANTICIPADAS` (V6 no trae una condición para VELOCIDAD) = completada al menos 24 h antes del límite; se guarda como `anticipada` en el evento `TAREA_COMPLETADA`.
+- **Extensión a V6**: `logro.nombre_en` y `descripcion_en` (la app es bilingüe).
+
+## Protección (RF-24) y recompensas (RF-27)
+- Se obtienen protecciones como recompensa: +1 cada vez que la racha llega a un múltiplo de 7 y +1 única al llegar a 500 puntos. Máximo 3 guardadas (si está lleno, no se registra la recompensa).
+- Uso **manual**, solo sobre el INCUMPLIDO más reciente mientras siga siendo el último día evaluado y si había racha. El día pasa a PROTEGIDO **conservando sus conteos** y la racha vuelve a `racha_previa`.
+- **Extensión a V6**: `dia_racha.racha_previa` (necesaria para restaurar) y `transaccion_gamificacion.codigo_recompensa`.
+
+## Recuperación (RF-25)
+- Se puede iniciar si la racha perdida era > 0, el día no fue protegido, no hay otra activa y no pasaron 3 días evaluados desde la pérdida. Una sola vez por racha perdida.
+- Periodo de 3 días locales. Condiciones: completar las tareas que causaron el incumplimiento (tarde vale) y no tener ningún INCUMPLIDO en el periodo.
+- INCUMPLIDO en el periodo → FALLIDA de inmediato; al terminar → EXITOSA si se completaron, si no FALLIDA; cancelar → CANCELADA. EXITOSA restaura `racha_perdida + racha conseguida en el periodo`.
+- Un día protegido no se puede recuperar y un día en recuperación no se puede proteger.
+- **Extensión a V6**: `recuperacion_racha.id_dia_perdido`, `tareas_atrasadas`, `racha_restaurada`, `motivo_resolucion`.
+
+## Seguridad
+- Ningún endpoint de gamificación recibe un id de usuario: todo sale de la sesión. FK compuestas `(id, id_usuario)` hacia `tarea` y `dia_racha`.
+- Las tablas de gamificación solo guardan ids, cifras y fechas: ni contraseñas, ni tokens, ni datos personales.
+
+## Cambios en pruebas existentes
+Ninguna prueba anterior se modificó ni eliminó. `conftest.py`: el TRUNCATE incluye las tablas de gamificación (no `logro`, que es catálogo) y `insertar_tarea` acepta `fecha_programada` y `fecha_completada`.

@@ -1,0 +1,2445 @@
+diff --git a/DECISIONES.md b/DECISIONES.md
+index 2181ce2..14e59ff 100644
+--- a/DECISIONES.md
++++ b/DECISIONES.md
+@@ -52,3 +52,44 @@ Registro breve de lo adoptado. Etiquetas: **[DOC]** viene de la documentación (
+ 
+ ## Fuera de alcance (no implementado a propósito)
+ RF-12 a RF-33, Google Sign-In, límite de intentos de login, reutilización de refresh token revocado (detección), borrado/desactivación de materias.
++
++
++# RF-12, RF-13 y RF-32 (implementación, 2026-11-06)
++
++Base: las decisiones aprobadas de *Decisiones técnicas — RF-12 a RF-21* (§4 Notificaciones, §5.1, §5.2, §10, §11), guardadas en los archivos del proyecto (`knowledge/claude/DECISIONES.md`). Aquí solo se registra lo que se programó y lo que se tuvo que decidir al implementarlo.
++
++## Arquitectura (aplicada tal como estaba aprobada)
++- El backend **genera** los avisos y los guarda (`notificacion`, PROGRAMADA). La app los **recibe** con `POST /notificaciones/sincronizar` y los mostrará como notificaciones **locales**. Sin Firebase ni servidor 24/7.
++- **ENVIADA** = la hora ya pasó y el aviso estaba sincronizado con el dispositivo (`fecha_envio = fecha_programada`). Es una aproximación: no confirma que Android lo mostró. Al pasar a ENVIADA se registra `NOTIFICACION_ENVIADA` en el historial (RF-13 regla 5).
++- Un aviso cuya hora pasó **sin haberse sincronizado nunca** pasa a CANCELADA (no pudo llegar al teléfono). [DECISIÓN AL IMPLEMENTAR]
++- **El plugin de notificaciones del sistema operativo no se agregó todavía** (decisión de la autora, 2026-11-06): no se podía compilar Flutter en el entorno y un plugin nativo sin compilar ponía en riesgo la demo. La app ya consulta y muestra el plan en el detalle de cada tarea.
++
++## Cómo se recalcula el plan
++- `NotificacionService.replanificar(usuario, ahora)` deja en la BD exactamente los avisos futuros que corresponden: crea los nuevos, actualiza el texto de los que siguen (si cambió el título o el idioma) y **cancela** los que ya no aplican. Es **idempotente**.
++- Se llama dentro de la misma transacción que la operación que lo provoca: crear, editar (estado, fecha, título), eliminar, cambiar la preferencia o el idioma, y al sincronizar. Si la operación falla, el plan no cambia.
++- Antes de replanificar se bloquea la fila del usuario (`SELECT ... FOR UPDATE`) y la BD tiene un **índice único parcial** `(id_tarea, fecha_programada)` para estados no cancelados: no puede haber avisos duplicados ni con dos peticiones simultáneas.
++- **Horizonte de 7 días** (`notif_horizonte_horas`): solo se guardan avisos dentro de los próximos 7 días; el plan se extiende al sincronizar o con el proceso `python -m app.modules.notificaciones.procesos`. Así se cumple "con T > 7 días no se planifica ningún aviso todavía" sin APScheduler y sin superar el límite de avisos pendientes de iOS. [DECISIÓN AL IMPLEMENTAR]
++
++## Propuestas de §12 que se tomaron como valor por defecto (configurables, revisables)
++V6 no define estos valores. Estaban como [PROPUESTA]; se implementaron como parámetros en `core/config.py` para poder cambiarlos sin tocar la lógica:
++- **Alineación** hacia atrás desde la fecha límite (T − h, T − 2h, …).
++- **Silencio**: un aviso entre 22:00 y 07:00 locales pasa a las 07:00; si eso queda en o después de la fecha límite, a las 21:30 previas; si ya pasó, se descarta. El aviso T − 1 h **también respeta el silencio** (era el punto abierto).
++- **CORRECTIVA** (tarea vencida y abierta): 1 h después de vencer y luego a las 19:00 locales durante 3 días (Tranquilo: solo el primero).
++- No se implementó **IGNORADA** ni las respuestas (RESPONDIDA): son de RF-14. `requiere_accion` queda en `false` hasta RF-14.
++
++## Historial (RF-32)
++- Catálogo en `historial/tipos.py`: `TAREA_CREADA`, `TAREA_EDITADA`, `TAREA_ESTADO_CAMBIADO`, `TAREA_COMPLETADA`, `TAREA_REABIERTA`, `TAREA_POSPUESTA`, `TAREA_REPROGRAMADA`, `TAREA_ELIMINADA` y `NOTIFICACION_ENVIADA`.
++- Una edición genera `TAREA_EDITADA` (todos los cambios, como antes) **más** el evento específico del estado o de la fecha, como fija §5.1 punto 5. Nunca dos eventos del mismo tipo por operación.
++- **Reprogramación** (V6 no la distingue de posponer): `TAREA_POSPUESTA` si la tarea estaba abierta y no vencida y la fecha se movió a una posterior (§5.1); `TAREA_REPROGRAMADA` en cualquier otro cambio de fecha (adelantarla o mover una vencida). [DECISIÓN AL IMPLEMENTAR]
++- `TAREA_COMPLETADA` guarda `a_tiempo` (RF-12 regla 5: a tiempo si se completa antes o exactamente en la fecha límite). Se compara con la fecha límite vigente **antes** de la operación. [DECISIÓN AL IMPLEMENTAR]
++- `tarea.veces_pospuesta` (V6) **no se creó**: se puede derivar contando `TAREA_POSPUESTA`. Se agregará si RF-16 lo necesita como columna.
++- Consulta: `GET /tareas/{id}/historial` (solo el dueño; tarea eliminada → 404, pero sus eventos se conservan en la BD).
++
++## TAR-09 implementada (cambio visible en RF-05)
++Una tarea **COMPLETADA no puede cambiar su `fecha_limite`** (error 422 `FECHA_TAREA_COMPLETADA`); se permite si en la misma petición se reabre. Era una decisión aprobada (§5.2) y es necesaria para RF-13 reglas 6-7: una entrega con retraso no puede convertirse después en una "a tiempo".
++
++## Cambios en pruebas existentes
++Tres pruebas de `test_tareas.py` comprobaban que el historial quedaba vacío o con un solo evento. Desde RF-32 la creación también registra `TAREA_CREADA`, así que se ajustaron para no contar ese evento. No se eliminó ninguna prueba.
++
++## Relación con el parche `entregas/paso1_migracion_0003.patch`
++Se revisó y se reutilizó **solo la parte de notificaciones** (columnas, CHECK y FK compuestas). La migración `0003` del repositorio la reemplaza: si algún día se aplican las tablas de enfoque, gamificación o riesgo, deben ir en una migración `0004` nueva, no con ese parche (chocaría con la `0003` actual).
+diff --git a/README.md b/README.md
+index da520ad..28698ae 100644
+--- a/README.md
++++ b/README.md
+@@ -2,7 +2,7 @@
+ 
+ | Parte | Estado |
+ |---|---|
+-| `backend/` (FastAPI + PostgreSQL) | **Implementado y probado** (139 pruebas) |
++| `backend/` (FastAPI + PostgreSQL) | **Implementado y probado** (198 pruebas: RF-01 a RF-11, RF-12, RF-13 y RF-32) |
+ | `frontend/` (Flutter) | 
+ 
+ Decisiones y puntos abiertos: [`DECISIONES.md`](DECISIONES.md).
+@@ -78,6 +78,19 @@ Para agregar un RF nuevo (p. ej. notificaciones): crear `modules/notificaciones/
+ 
+ Migración `0002`: columnas `usuario.idioma`, `personalizacion_completada_en`, `tutorial_completado_en`, `foto_actualizada_en` y tablas `preferencia_notificacion` y `foto_perfil`. Si ya tenías la BD en `0001`: `alembic upgrade head`. Hace falta `pip install -r requirements.txt` (nuevo: Pillow, python-multipart).
+ 
++### RF-12, RF-13 y RF-32 (notificaciones e historial)
++Detalle completo en [`docs/RF-12_RF-13_RF-32.md`](docs/RF-12_RF-13_RF-32.md).
++
++| RF | Endpoint | Código principal | Pruebas |
++|---|---|---|---|
++| RF-12 Generar notificaciones | `POST /notificaciones/sincronizar`, `GET /notificaciones` (+ automático al crear/editar/eliminar tareas y al cambiar preferencias) | `notificaciones/service.py` | `test_notificaciones.py` |
++| RF-13 Escalar frecuencia | (dentro del plan) | `notificaciones/planificador.py` (reglas puras) | `test_planificador_notificaciones.py`, `test_notificaciones.py` |
++| RF-32 Historial de tareas | `GET /tareas/{id}/historial` | `tareas/service.py`, `historial/` | `test_historial_rf32.py` |
++
++Migración `0003` (`0003_notificaciones_rf_12_13.py`): tabla `notificacion` y columna `historial_evento.id_notificacion`. Solo agrega estructura. Si tu BD está en `0002`: `alembic upgrade head`.
++
++Proceso periódico (opcional, idempotente): `python -m app.modules.notificaciones.procesos` registra las enviadas y extiende el plan de todos los usuarios. Se puede programar con cron.
++
+ ### Modificaciones al modelo del documento
+ Ver `DECISIONES.md` y los docstrings de cada `models.py`. Resumen: se agregó `materia.nombre_normalizado` y dos restricciones únicas (soporte de RF-10/RF-11); no se crearon `usuario.auth_uid`, `tarea.progreso`, `tarea.veces_pospuesta`, `tarea.fecha_programada` ni los FK de historial a notificación/sesión de enfoque (pertenecen a requerimientos posteriores).
+ 
+diff --git a/backend/app/core/config.py b/backend/app/core/config.py
+index 059a58a..ad8a739 100644
+--- a/backend/app/core/config.py
++++ b/backend/app/core/config.py
+@@ -20,6 +20,32 @@ class Settings(BaseSettings):
+ 
+     zona_horaria_defecto: str = "America/Mexico_City"
+ 
++    # ---- RF-12 / RF-13: notificaciones (DECISIONES.md §4). V6 deja estos valores "definidos por el
++    # sistema"; por eso viven aquí y se pueden sobrescribir por variable de entorno (JSON en los dict).
++    # Horas entre avisos por perfil de recordatorios y nivel (§4.3).
++    notif_intervalos_horas: dict[str, dict[str, int]] = {
++        "tranquilo": {"RECORDATORIO": 48, "URGENTE": 24, "CRITICA": 8},
++        "equilibrado": {"RECORDATORIO": 24, "URGENTE": 12, "CRITICA": 4},
++        "insistente": {"RECORDATORIO": 12, "URGENTE": 6, "CRITICA": 2},
++    }
++    # Límites de cada nivel según el tiempo restante T (§4.2): CRITICA 0<T<=24 h, URGENTE 24<T<=72 h,
++    # RECORDATORIO 72 h<T<=7 días. Con T mayor no hay avisos.
++    notif_umbral_critica_horas: int = 24
++    notif_umbral_urgente_horas: int = 72
++    notif_umbral_recordatorio_horas: int = 168
++    notif_aviso_final_minutos: int = 60  # aviso especial T - 1 h (§4.3)
++    notif_separacion_minima_minutos: int = 15  # dos avisos de la misma tarea no pueden estar más cerca
++    notif_maximo_diario: dict[str, int] = {"tranquilo": 4, "equilibrado": 8, "insistente": 12}  # §4.4
++    notif_silencio_inicio: str = "22:00"  # §4.5, hora local del usuario
++    notif_silencio_fin: str = "07:00"
++    notif_silencio_alternativa: str = "21:30"  # [PROPUESTA §12] si mover a las 07:00 deja el aviso tarde
++    # [PROPUESTA §12] CORRECTIVA: 1 h después de vencer y luego a las 19:00 locales, como máximo N días.
++    notif_correctiva_primera_horas: int = 1
++    notif_correctiva_hora_diaria: str = "19:00"
++    notif_correctiva_dias: dict[str, int] = {"tranquilo": 0, "equilibrado": 3, "insistente": 3}
++    # Solo se planifican avisos dentro de este horizonte; al sincronizar se extiende el plan.
++    notif_horizonte_horas: int = 168
++
+     @model_validator(mode="after")
+     def exigir_clave_segura_en_produccion(self) -> "Settings":
+         if self.entorno == "produccion" and (
+diff --git a/backend/app/core/tiempo.py b/backend/app/core/tiempo.py
+index 84a3c60..b192f44 100644
+--- a/backend/app/core/tiempo.py
++++ b/backend/app/core/tiempo.py
+@@ -4,3 +4,15 @@ from datetime import datetime, timezone
+ 
+ def ahora_utc() -> datetime:
+     return datetime.now(timezone.utc)
++
++
++def zona_horaria(nombre: str | None):
++    """ZoneInfo del usuario; si el nombre no es válido se usa la zona por defecto de la configuración."""
++    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
++
++    from app.core.config import settings
++
++    try:
++        return ZoneInfo(nombre or settings.zona_horaria_defecto)
++    except (ZoneInfoNotFoundError, ValueError):
++        return ZoneInfo(settings.zona_horaria_defecto)
+diff --git a/backend/app/db/registro_modelos.py b/backend/app/db/registro_modelos.py
+index 726bc26..58e520a 100644
+--- a/backend/app/db/registro_modelos.py
++++ b/backend/app/db/registro_modelos.py
+@@ -5,5 +5,6 @@ Al agregar un módulo nuevo con tablas (por ejemplo notificaciones), se importa
+ from app.modules.auth.models import SesionAutenticacion  # noqa: F401
+ from app.modules.historial.models import HistorialEvento  # noqa: F401
+ from app.modules.materias.models import Materia  # noqa: F401
++from app.modules.notificaciones.models import Notificacion  # noqa: F401
+ from app.modules.tareas.models import Tarea  # noqa: F401
+ from app.modules.usuarios.models import FotoPerfil, PreferenciaNotificacion, Usuario  # noqa: F401
+diff --git a/backend/app/main.py b/backend/app/main.py
+index 9a73cff..b115efb 100644
+--- a/backend/app/main.py
++++ b/backend/app/main.py
+@@ -3,7 +3,9 @@ from fastapi import FastAPI
+ from app.core.errors import registrar_manejadores
+ from app.db import registro_modelos  # noqa: F401  (SQLAlchemy necesita conocer todas las tablas)
+ from app.modules.auth.router import router as auth_router
++from app.modules.historial.router import router as historial_router
+ from app.modules.materias.router import router as materias_router
++from app.modules.notificaciones.router import router as notificaciones_router
+ from app.modules.tareas.router import router as tareas_router
+ from app.modules.usuarios.router import router as usuarios_router
+ 
+@@ -12,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
+ app = FastAPI(
+     title="AntiProcrastinación API",
+     version="0.1.0",
+-    description="Backend de RF-01 a RF-11: autenticación, tareas y materias.",
++    description="Backend de RF-01 a RF-11 (autenticación, tareas y materias), RF-12/RF-13 (notificaciones) y RF-32 (historial).",
+ )
+ app.add_middleware(
+     CORSMiddleware,
+@@ -26,6 +28,8 @@ app.include_router(auth_router)
+ app.include_router(usuarios_router)
+ app.include_router(materias_router)
+ app.include_router(tareas_router)
++app.include_router(historial_router)
++app.include_router(notificaciones_router)
+ 
+ 
+ @app.get("/salud", tags=["Sistema"])
+diff --git a/backend/app/modules/historial/models.py b/backend/app/modules/historial/models.py
+index 7e0fe12..04becd3 100644
+--- a/backend/app/modules/historial/models.py
++++ b/backend/app/modules/historial/models.py
+@@ -1,15 +1,16 @@
+-"""Entidad HISTORIAL_EVENTO (documento §4.2), versión MÍNIMA.
++"""Entidad HISTORIAL_EVENTO (documento §4.2).
+ 
+-Por qué existe ya: RF-05 (reglas 5-7) y RF-06 (regla 4) exigen registrar ediciones y eliminaciones.
+-Completa RF-32/RF-33 queda para más adelante.
++Soporta RF-05 (reglas 5-7), RF-06 (regla 4), RF-32 (historial de tareas) y RF-13 regla 5 (registro de
++notificaciones enviadas). Los registros son de solo-agregar: ningún servicio los modifica ni los borra.
+ 
+-Aún no se crean `id_notificacion` ni `id_sesion` (FK a tablas que todavía no existen);
+-se agregarán por migración junto con esos módulos.
++- `id_notificacion` (migración 0003): FK COMPUESTA (id_notificacion, id_usuario) -> notificacion, igual que
++  la de tarea: un evento solo puede apuntar a datos del mismo usuario.
++- `id_sesion` (sesión de enfoque) todavía no existe: llega con RF-14/RF-21.
+ """
+ import uuid
+ from datetime import datetime
+ 
+-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, String, func
++from sqlalchemy import CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, Index, String, func
+ from sqlalchemy.dialects.postgresql import JSONB
+ from sqlalchemy.orm import Mapped, mapped_column
+ 
+@@ -24,12 +25,19 @@ class HistorialEvento(Base):
+             ["tarea.id_tarea", "tarea.id_usuario"],
+             name="fk_historial_tarea_del_mismo_usuario",
+         ),
++        ForeignKeyConstraint(
++            ["id_notificacion", "id_usuario"],
++            ["notificacion.id_notificacion", "notificacion.id_usuario"],
++            name="fk_historial_notificacion_del_mismo_usuario",
++        ),
+         CheckConstraint("origen IN ('USUARIO', 'SISTEMA', 'NOTIFICACION')", name="origen_valido"),
++        Index("ix_historial_evento_usuario_fecha", "id_usuario", "fecha_evento"),
+     )
+ 
+     id_evento: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+     id_usuario: Mapped[uuid.UUID] = mapped_column(ForeignKey("usuario.id_usuario"), index=True)
+     id_tarea: Mapped[uuid.UUID | None] = mapped_column(index=True)
++    id_notificacion: Mapped[uuid.UUID | None] = mapped_column()
+     tipo_evento: Mapped[str] = mapped_column(String(40))
+     origen: Mapped[str] = mapped_column(String(15), server_default="USUARIO")
+     # Valores anteriores y nuevos del cambio: {"antes": {...}, "despues": {...}}
+diff --git a/backend/app/modules/historial/repository.py b/backend/app/modules/historial/repository.py
+index 4743953..a1f5fb2 100644
+--- a/backend/app/modules/historial/repository.py
++++ b/backend/app/modules/historial/repository.py
+@@ -2,6 +2,7 @@
+ import uuid
+ from datetime import datetime
+ 
++from sqlalchemy import select
+ from sqlalchemy.orm import Session
+ 
+ from app.modules.historial.models import HistorialEvento
+@@ -14,15 +15,17 @@ class HistorialRepository:
+     def registrar(
+         self,
+         id_usuario: uuid.UUID,
+-        id_tarea: uuid.UUID,
++        id_tarea: uuid.UUID | None,
+         tipo_evento: str,
+         datos: dict,
+         fecha_evento: datetime,
+         origen: str = "USUARIO",
++        id_notificacion: uuid.UUID | None = None,
+     ) -> HistorialEvento:
+         evento = HistorialEvento(
+             id_usuario=id_usuario,
+             id_tarea=id_tarea,
++            id_notificacion=id_notificacion,
+             tipo_evento=tipo_evento,
+             origen=origen,
+             datos=datos,
+@@ -30,3 +33,13 @@ class HistorialRepository:
+         )
+         self.db.add(evento)
+         return evento
++
++    def listar_de_tarea(self, id_usuario: uuid.UUID, id_tarea: uuid.UUID) -> list[HistorialEvento]:
++        """RF-32. Eventos de una tarea, en orden cronológico. Siempre filtra por el usuario."""
++        return list(
++            self.db.scalars(
++                select(HistorialEvento)
++                .where(HistorialEvento.id_usuario == id_usuario, HistorialEvento.id_tarea == id_tarea)
++                .order_by(HistorialEvento.fecha_evento.asc(), HistorialEvento.tipo_evento.asc())
++            )
++        )
+diff --git a/backend/app/modules/historial/router.py b/backend/app/modules/historial/router.py
+new file mode 100644
+index 0000000..61a80d8
+--- /dev/null
++++ b/backend/app/modules/historial/router.py
+@@ -0,0 +1,41 @@
++"""RF-32: consulta del historial de una tarea (solo lectura; el historial nunca se edita por la API)."""
++import uuid
++from datetime import datetime
++from typing import Annotated, Any
++
++from fastapi import APIRouter, Depends
++from pydantic import BaseModel, ConfigDict
++from sqlalchemy.orm import Session
++
++from app.core.dependencies import get_db
++from app.core.errors import NoEncontrado
++from app.modules.auth.dependencies import get_usuario_actual
++from app.modules.historial.repository import HistorialRepository
++from app.modules.tareas.repository import TareaRepository
++from app.modules.usuarios.models import Usuario
++
++router = APIRouter(prefix="/tareas", tags=["Historial"])
++
++
++class EventoSalida(BaseModel):
++    model_config = ConfigDict(from_attributes=True)
++
++    id_evento: uuid.UUID
++    id_tarea: uuid.UUID | None
++    id_notificacion: uuid.UUID | None
++    tipo_evento: str
++    origen: str
++    datos: dict[str, Any] | None
++    fecha_evento: datetime
++
++
++@router.get("/{id_tarea}/historial", response_model=list[EventoSalida])
++def historial_de_tarea(
++    id_tarea: uuid.UUID,
++    usuario: Annotated[Usuario, Depends(get_usuario_actual)],
++    db: Annotated[Session, Depends(get_db)],
++):
++    """Eventos de una tarea propia, en orden cronológico. Tarea ajena, inexistente o eliminada -> 404."""
++    if TareaRepository(db).obtener(id_tarea, usuario.id_usuario) is None:
++        raise NoEncontrado("Tarea no encontrada.", "TAREA_NO_ENCONTRADA")
++    return HistorialRepository(db).listar_de_tarea(usuario.id_usuario, id_tarea)
+diff --git a/backend/app/modules/historial/tipos.py b/backend/app/modules/historial/tipos.py
+index 360d8ee..34dab96 100644
+--- a/backend/app/modules/historial/tipos.py
++++ b/backend/app/modules/historial/tipos.py
+@@ -1,7 +1,28 @@
+-"""Tipos de evento del historial (catálogo MÍNIMO de esta etapa).
++"""Catálogo de tipos de evento del historial.
+ 
+-El documento (§4.2) menciona un "catálogo de eventos" sin listarlo. Aquí solo existen los
+-necesarios para RF-05 y RF-06; RF-32/RF-33 lo ampliarán (creación, cambio de estado, etc.).
++V6 §4.2 menciona un "catálogo de eventos" sin listarlo. Los nombres siguen el formato acordado en
++DECISIONES.md §11 (`TAREA_*`, `NOTIFICACION_*`).
++
++RF-32 (eventos mínimos de una tarea) -> tipo:
++- creación ............ TAREA_CREADA
++- modificación ........ TAREA_EDITADA (todos los campos cambiados, con valores antes/después)
++- cambio de estado .... TAREA_ESTADO_CAMBIADO (Pendiente <-> En progreso) y TAREA_REABIERTA
++- finalización ........ TAREA_COMPLETADA (indica si fue a tiempo o con retraso, RF-12 regla 5 / RF-13 reglas 6-7)
++- reprogramación ...... TAREA_POSPUESTA (fecha posterior en una tarea abierta y no vencida, DECISIONES §5.1)
++                        o TAREA_REPROGRAMADA (cualquier otro cambio de fecha límite)
++- eliminación ......... TAREA_ELIMINADA
++
++Una operación genera como máximo un evento de cada tipo. Una edición que cambia el estado o la fecha
++genera TAREA_EDITADA más el evento específico (así lo fija DECISIONES §5.1 punto 5).
++
++RF-13 regla 5: NOTIFICACION_ENVIADA (origen SISTEMA).
+ """
++TAREA_CREADA = "TAREA_CREADA"
+ TAREA_EDITADA = "TAREA_EDITADA"
++TAREA_ESTADO_CAMBIADO = "TAREA_ESTADO_CAMBIADO"
++TAREA_COMPLETADA = "TAREA_COMPLETADA"
++TAREA_REABIERTA = "TAREA_REABIERTA"
++TAREA_POSPUESTA = "TAREA_POSPUESTA"
++TAREA_REPROGRAMADA = "TAREA_REPROGRAMADA"
+ TAREA_ELIMINADA = "TAREA_ELIMINADA"
++NOTIFICACION_ENVIADA = "NOTIFICACION_ENVIADA"
+diff --git a/backend/app/modules/notificaciones/__init__.py b/backend/app/modules/notificaciones/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/backend/app/modules/notificaciones/mensajes.py b/backend/app/modules/notificaciones/mensajes.py
+new file mode 100644
+index 0000000..1cde412
+--- /dev/null
++++ b/backend/app/modules/notificaciones/mensajes.py
+@@ -0,0 +1,34 @@
++"""Texto de cada notificación (V6 RF-12 regla 3: indicar como mínimo el título de la tarea).
++
++Se genera en el idioma del usuario (`usuario.idioma`) con la fecha límite en su zona horaria.
++"""
++from datetime import datetime
++from zoneinfo import ZoneInfo
++
++_PLANTILLAS = {
++    "es": {
++        "RECORDATORIO": "Recordatorio: «{titulo}» vence el {fecha}.",
++        "URGENTE": "Urgente: «{titulo}» vence el {fecha}. Quedan menos de 3 días.",
++        "CRITICA": "Último día: «{titulo}» vence el {fecha}.",
++        "FINAL": "Falta 1 hora: «{titulo}» vence a las {hora}.",
++        "CORRECTIVA": "«{titulo}» venció el {fecha}. Todavía puedes completarla.",
++    },
++    "en": {
++        "RECORDATORIO": "Reminder: \"{titulo}\" is due on {fecha}.",
++        "URGENTE": "Urgent: \"{titulo}\" is due on {fecha}. Less than 3 days left.",
++        "CRITICA": "Last day: \"{titulo}\" is due on {fecha}.",
++        "FINAL": "1 hour left: \"{titulo}\" is due at {hora}.",
++        "CORRECTIVA": "\"{titulo}\" was due on {fecha}. You can still complete it.",
++    },
++}
++
++
++def construir_mensaje(
++    tipo: str, es_aviso_final: bool, titulo: str, fecha_limite: datetime, zona: ZoneInfo, idioma: str
++) -> str:
++    plantillas = _PLANTILLAS.get(idioma, _PLANTILLAS["es"])
++    local = fecha_limite.astimezone(zona)
++    clave = "FINAL" if es_aviso_final else tipo
++    return plantillas[clave].format(
++        titulo=titulo, fecha=local.strftime("%d/%m/%Y %H:%M"), hora=local.strftime("%H:%M")
++    )
+diff --git a/backend/app/modules/notificaciones/models.py b/backend/app/modules/notificaciones/models.py
+new file mode 100644
+index 0000000..0fafda1
+--- /dev/null
++++ b/backend/app/modules/notificaciones/models.py
+@@ -0,0 +1,98 @@
++"""Entidad NOTIFICACION (documento V6 §4.2). Soporta RF-12 y RF-13.
++
++Basada en el diseño revisado del parche `entregas/paso1_migracion_0003.patch` (solo la parte de
++notificaciones; enfoque, gamificación y riesgo quedan fuera de este alcance).
++
++Qué significa cada estado aquí (DECISIONES.md §4.1):
++- PROGRAMADA: el backend la generó y guardó. NO quiere decir que llegó al teléfono.
++- ENVIADA: su `fecha_programada` ya pasó y el dispositivo la había sincronizado
++  (`fecha_sincronizacion` no nula). Es una aproximación: el backend no puede confirmar que Android
++  la mostró físicamente. `fecha_envio` = `fecha_programada`.
++- CANCELADA: dejó de ser necesaria (tarea completada, eliminada, fecha cambiada, preferencias) o su
++  hora pasó sin que el dispositivo la sincronizara.
++- RESPONDIDA / IGNORADA: reservadas para RF-14 (fuera de alcance), no se escriben todavía.
++
++Diferencias con V6 (extensiones documentadas en DECISIONES.md):
++- `fecha_generacion`: cuándo la creó el backend.
++- `fecha_sincronizacion`: cuándo el dispositivo la recibió por última vez.
++- `es_aviso_final`: marca el aviso especial T - 1 h (prioritario en el máximo diario).
++- Índice único PARCIAL (id_tarea, fecha_programada) para estados no cancelados: impide duplicados.
++"""
++import uuid
++from datetime import datetime
++
++from sqlalchemy import (
++    Boolean,
++    CheckConstraint,
++    DateTime,
++    ForeignKey,
++    ForeignKeyConstraint,
++    Index,
++    SmallInteger,
++    String,
++    Text,
++    UniqueConstraint,
++    func,
++    text,
++)
++from sqlalchemy.orm import Mapped, mapped_column
++
++from app.db.base import Base
++
++
++class Notificacion(Base):
++    __tablename__ = "notificacion"
++    __table_args__ = (
++        ForeignKeyConstraint(
++            ["id_tarea", "id_usuario"],
++            ["tarea.id_tarea", "tarea.id_usuario"],
++            name="fk_notificacion_tarea_del_mismo_usuario",
++        ),
++        # Necesaria para la FK compuesta que usa HISTORIAL_EVENTO.
++        UniqueConstraint("id_notificacion", "id_usuario", name="uq_notificacion_id_usuario"),
++        CheckConstraint(
++            "tipo IN ('RECORDATORIO', 'URGENTE', 'CRITICA', 'CORRECTIVA', 'ACUMULACION')",
++            name="tipo_valido",
++        ),
++        CheckConstraint(
++            "estado IN ('PROGRAMADA', 'ENVIADA', 'RESPONDIDA', 'IGNORADA', 'CANCELADA')",
++            name="estado_valido",
++        ),
++        CheckConstraint(
++            "accion_respuesta IN ('COMPLETAR', 'INICIAR_ENFOQUE', 'POSPONER', 'CONTINUAR_DESPUES')",
++            name="accion_respuesta_valida",
++        ),
++        CheckConstraint("nivel_intensidad BETWEEN 1 AND 4", name="nivel_intensidad_valido"),
++        # V6: id_tarea "es NULL solo en alertas de acumulación" (RF-15).
++        CheckConstraint(
++            "id_tarea IS NOT NULL OR tipo = 'ACUMULACION'", name="tarea_obligatoria_salvo_acumulacion"
++        ),
++        CheckConstraint("length(trim(mensaje)) > 0", name="mensaje_no_vacio"),
++        # Una tarea no puede tener dos avisos vigentes en el mismo instante (prevención de duplicados).
++        Index(
++            "uq_notificacion_tarea_momento_vigente",
++            "id_tarea",
++            "fecha_programada",
++            unique=True,
++            postgresql_where=text("estado <> 'CANCELADA'"),
++        ),
++        Index("ix_notificacion_usuario_estado_programada", "id_usuario", "estado", "fecha_programada"),
++        Index("ix_notificacion_tarea_estado", "id_tarea", "estado"),
++    )
++
++    id_notificacion: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
++    id_usuario: Mapped[uuid.UUID] = mapped_column(ForeignKey("usuario.id_usuario"))
++    id_tarea: Mapped[uuid.UUID | None] = mapped_column()
++    tipo: Mapped[str] = mapped_column(String(20))
++    nivel_intensidad: Mapped[int | None] = mapped_column(SmallInteger)
++    mensaje: Mapped[str] = mapped_column(Text)
++    requiere_accion: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
++    es_aviso_final: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
++    estado: Mapped[str] = mapped_column(String(15), server_default="PROGRAMADA")
++    fecha_generacion: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
++    fecha_programada: Mapped[datetime] = mapped_column(DateTime(timezone=True))
++    fecha_sincronizacion: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
++    fecha_envio: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
++    fecha_cancelacion: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
++    accion_respuesta: Mapped[str | None] = mapped_column(String(20))
++    fecha_respuesta: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+diff --git a/backend/app/modules/notificaciones/planificador.py b/backend/app/modules/notificaciones/planificador.py
+new file mode 100644
+index 0000000..3fd8a08
+--- /dev/null
++++ b/backend/app/modules/notificaciones/planificador.py
+@@ -0,0 +1,203 @@
++"""Reglas PURAS de RF-12 y RF-13: qué avisos le corresponden a cada tarea y cuándo.
++
++No accede a la base de datos ni al reloj: recibe `ahora`, las tareas y los parámetros, y devuelve el plan.
++Así se prueba sin dispositivo y sin depender de la hora real.
++
++Reglas (fuente entre corchetes):
++- Solo tareas no completadas ni eliminadas [V6 RF-12 r1 y r4, RF-13 r3].
++- Niveles por tiempo restante T = fecha_limite - momento del aviso [DECISIONES §4.2]:
++  RECORDATORIO (1) 72 h < T <= 7 d · URGENTE (2) 24 h < T <= 72 h · CRITICA (3) 0 < T <= 24 h ·
++  CORRECTIVA (4) tarea ya vencida.
++- Intervalos por perfil y nivel, alineados hacia atrás desde la fecha límite (T - h, T - 2h, ...)
++  [DECISIONES §4.3; la alineación es PROPUESTA §12]. Como el intervalo se acorta en cada nivel, la
++  frecuencia sube al acercarse la fecha límite [V6 RF-13 r1 y r2].
++- Aviso especial T - 1 h, CRITICA, prioritario [DECISIONES §4.3].
++- Dos avisos de una misma tarea no pueden quedar a menos de 15 min; se conserva el de mayor nivel.
++- Horario de silencio 22:00-07:00 local [DECISIONES §4.5]. Reubicación [PROPUESTA §12]: a las 07:00; si eso
++  queda en o después de la fecha límite, a las 21:30 previas; si ya pasó, se descarta.
++- Máximo diario por usuario y día local [DECISIONES §4.4], con el orden de conservación definido allí.
++- CORRECTIVA [PROPUESTA §12]: 1 h después de vencer y luego a las 19:00 locales, N días (Tranquilo: 0).
++- Solo se planifica dentro de un horizonte (7 días): el plan se extiende al volver a sincronizar.
++"""
++from dataclasses import dataclass, field
++from datetime import date, datetime, time, timedelta
++from zoneinfo import ZoneInfo
++
++RECORDATORIO = "RECORDATORIO"
++URGENTE = "URGENTE"
++CRITICA = "CRITICA"
++CORRECTIVA = "CORRECTIVA"
++NIVEL = {RECORDATORIO: 1, URGENTE: 2, CRITICA: 3, CORRECTIVA: 4}
++
++
++@dataclass(frozen=True)
++class ParametrosPlan:
++    intervalos_horas: dict[str, int]  # tipo -> horas (del perfil elegido)
++    maximo_diario: int
++    dias_correctiva: int
++    umbral_critica_horas: int = 24
++    umbral_urgente_horas: int = 72
++    umbral_recordatorio_horas: int = 168
++    aviso_final_minutos: int = 60
++    separacion_minima_minutos: int = 15
++    silencio_inicio: time = time(22, 0)
++    silencio_fin: time = time(7, 0)
++    silencio_alternativa: time = time(21, 30)
++    correctiva_primera_horas: int = 1
++    correctiva_hora_diaria: time = time(19, 0)
++    horizonte_horas: int = 168
++
++
++@dataclass(frozen=True)
++class TareaPlan:
++    id_tarea: object
++    titulo: str
++    fecha_limite: datetime  # con zona horaria
++    prioridad: int  # 1 baja .. 3 alta
++
++
++@dataclass
++class Aviso:
++    id_tarea: object
++    tipo: str
++    fecha_programada: datetime
++    es_aviso_final: bool = False
++    # Datos para ordenar en el máximo diario; no se guardan.
++    fecha_limite: datetime | None = field(default=None, compare=False)
++    prioridad: int = field(default=2, compare=False)
++
++    @property
++    def nivel(self) -> int:
++        return NIVEL[self.tipo]
++
++
++def nivel_para(t_restante: timedelta, p: ParametrosPlan) -> str | None:
++    """Tipo que corresponde a un aviso emitido cuando faltan `t_restante` para la fecha límite."""
++    horas = t_restante.total_seconds() / 3600
++    if horas <= 0:
++        return CORRECTIVA
++    if horas <= p.umbral_critica_horas:
++        return CRITICA
++    if horas <= p.umbral_urgente_horas:
++        return URGENTE
++    if horas <= p.umbral_recordatorio_horas:
++        return RECORDATORIO
++    return None  # más de 7 días: todavía no corresponde ningún aviso
++
++
++def _en_silencio(momento: datetime, zona: ZoneInfo, p: ParametrosPlan) -> bool:
++    hora = momento.astimezone(zona).time()
++    if p.silencio_inicio <= p.silencio_fin:
++        return p.silencio_inicio <= hora < p.silencio_fin
++    return hora >= p.silencio_inicio or hora < p.silencio_fin
++
++
++def _local(dia: date, hora: time, zona: ZoneInfo) -> datetime:
++    return datetime.combine(dia, hora, tzinfo=zona)
++
++
++def reubicar_por_silencio(
++    momento: datetime, fecha_limite: datetime | None, zona: ZoneInfo, p: ParametrosPlan
++) -> datetime | None:
++    """Devuelve el momento fuera del horario de silencio, o None si no hay uno útil."""
++    if not _en_silencio(momento, zona, p):
++        return momento
++    local = momento.astimezone(zona)
++    # Día en que TERMINA este periodo de silencio (si ya pasó la hora de fin, es mañana).
++    dia_fin = local.date() if local.time() < p.silencio_fin else local.date() + timedelta(days=1)
++    despues = _local(dia_fin, p.silencio_fin, zona)
++    if fecha_limite is None or despues < fecha_limite:
++        return despues
++    antes = _local(dia_fin - timedelta(days=1), p.silencio_alternativa, zona)
++    return antes if antes < fecha_limite else None
++
++
++def avisos_de_tarea(tarea: TareaPlan, ahora: datetime, zona: ZoneInfo, p: ParametrosPlan) -> list[Aviso]:
++    """Plan de una tarea abierta, ya sin silencio y sin avisos a menos de 15 min entre sí."""
++    limite = tarea.fecha_limite
++    horizonte = ahora + timedelta(hours=p.horizonte_horas)
++    crudos: list[Aviso] = []
++
++    def agregar(tipo: str, momento: datetime, final: bool = False):
++        crudos.append(Aviso(tarea.id_tarea, tipo, momento, final, limite, tarea.prioridad))
++
++    # Niveles 1-3: múltiplos del intervalo de cada nivel, contados hacia atrás desde la fecha límite.
++    for tipo in (RECORDATORIO, URGENTE, CRITICA):
++        horas = p.intervalos_horas.get(tipo)
++        if not horas or horas <= 0:
++            continue
++        n = 1
++        while True:
++            restante = timedelta(hours=horas * n)
++            if restante.total_seconds() / 3600 > p.umbral_recordatorio_horas:
++                break
++            if nivel_para(restante, p) == tipo:
++                agregar(tipo, limite - restante)
++            n += 1
++    agregar(CRITICA, limite - timedelta(minutes=p.aviso_final_minutos), final=True)
++
++    # Nivel 4: tarea vencida y sin completar.
++    primera = limite + timedelta(hours=p.correctiva_primera_horas)
++    agregar(CORRECTIVA, primera)
++    dia = primera.astimezone(zona).date()
++    pendientes = p.dias_correctiva
++    while pendientes > 0:
++        momento = _local(dia, p.correctiva_hora_diaria, zona)
++        if momento > primera:
++            agregar(CORRECTIVA, momento)
++            pendientes -= 1
++        dia += timedelta(days=1)
++
++    plan: list[Aviso] = []
++    for aviso in crudos:
++        tope = None if aviso.tipo == CORRECTIVA else limite
++        momento = reubicar_por_silencio(aviso.fecha_programada, tope, zona, p)
++        if momento is None or momento <= ahora or momento > horizonte:
++            continue
++        aviso.fecha_programada = momento.astimezone(ahora.tzinfo)
++        plan.append(aviso)
++    return _sin_avisos_cercanos(plan, p)
++
++
++def _sin_avisos_cercanos(avisos: list[Aviso], p: ParametrosPlan) -> list[Aviso]:
++    """Si dos avisos de la misma tarea quedan a menos de la separación mínima, se conserva el de mayor nivel
++    (en empate, el aviso final y luego el más temprano)."""
++    separacion = timedelta(minutes=p.separacion_minima_minutos)
++    preferencia = sorted(avisos, key=lambda a: (-a.nivel, not a.es_aviso_final, a.fecha_programada))
++    elegidos: list[Aviso] = []
++    for aviso in preferencia:
++        if all(abs(aviso.fecha_programada - e.fecha_programada) >= separacion for e in elegidos):
++            elegidos.append(aviso)
++    return sorted(elegidos, key=lambda a: a.fecha_programada)
++
++
++def aplicar_maximo_diario(
++    avisos: list[Aviso], zona: ZoneInfo, p: ParametrosPlan, ya_usados: dict[date, int] | None = None
++) -> list[Aviso]:
++    """Máximo por usuario y día local. `ya_usados` cuenta avisos de ese día que ya no se replanifican
++    (enviados o con hora pasada). Orden de conservación (DECISIONES §4.4): aviso T-1 h, mayor nivel,
++    fecha límite más cercana, prioridad más alta."""
++    ya_usados = ya_usados or {}
++    por_dia: dict[date, list[Aviso]] = {}
++    for aviso in avisos:
++        por_dia.setdefault(aviso.fecha_programada.astimezone(zona).date(), []).append(aviso)
++    resultado: list[Aviso] = []
++    for dia, lista in por_dia.items():
++        cupo = max(p.maximo_diario - ya_usados.get(dia, 0), 0)
++        lista.sort(key=lambda a: (not a.es_aviso_final, -a.nivel, a.fecha_limite, -a.prioridad, a.fecha_programada))
++        resultado.extend(lista[:cupo])
++    return sorted(resultado, key=lambda a: (a.fecha_programada, str(a.id_tarea)))
++
++
++def planificar(
++    tareas: list[TareaPlan],
++    ahora: datetime,
++    zona: ZoneInfo,
++    p: ParametrosPlan,
++    ya_usados: dict[date, int] | None = None,
++) -> list[Aviso]:
++    """Plan completo de un usuario (todas sus tareas abiertas)."""
++    todos: list[Aviso] = []
++    for tarea in tareas:
++        todos.extend(avisos_de_tarea(tarea, ahora, zona, p))
++    return aplicar_maximo_diario(todos, zona, p, ya_usados)
+diff --git a/backend/app/modules/notificaciones/procesos.py b/backend/app/modules/notificaciones/procesos.py
+new file mode 100644
+index 0000000..1c19f76
+--- /dev/null
++++ b/backend/app/modules/notificaciones/procesos.py
+@@ -0,0 +1,22 @@
++"""Ejecución manual / programada del proceso de notificaciones (DECISIONES.md §10).
++
++    cd backend && python -m app.modules.notificaciones.procesos
++
++Registra como ENVIADA lo que ya se sincronizó y pasó su hora, cancela lo que nunca llegó al teléfono y
++extiende el plan de cada usuario dentro del horizonte. Es idempotente: se puede ejecutar varias veces.
++Para producción se puede programar con cron (no se agregó APScheduler, ver DECISIONES.md).
++"""
++from app.core.tiempo import ahora_utc
++from app.db import registro_modelos  # noqa: F401
++from app.db.session import SessionLocal
++from app.modules.notificaciones.service import procesar_todos
++
++
++def main() -> None:
++    with SessionLocal() as db:
++        total = procesar_todos(db, ahora_utc())
++    print(f"Notificaciones procesadas para {total} usuario(s).")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/backend/app/modules/notificaciones/repository.py b/backend/app/modules/notificaciones/repository.py
+new file mode 100644
+index 0000000..e414798
+--- /dev/null
++++ b/backend/app/modules/notificaciones/repository.py
+@@ -0,0 +1,70 @@
++"""Acceso a datos de NOTIFICACION. Toda consulta filtra por `id_usuario` (aislamiento de datos)."""
++import uuid
++from datetime import datetime
++
++from sqlalchemy import select
++from sqlalchemy.orm import Session
++
++from app.modules.notificaciones.models import Notificacion
++
++PROGRAMADA = "PROGRAMADA"
++ENVIADA = "ENVIADA"
++CANCELADA = "CANCELADA"
++
++
++class NotificacionRepository:
++    def __init__(self, db: Session):
++        self.db = db
++
++    def programadas_futuras(self, id_usuario: uuid.UUID, ahora: datetime) -> list[Notificacion]:
++        return list(
++            self.db.scalars(
++                select(Notificacion).where(
++                    Notificacion.id_usuario == id_usuario,
++                    Notificacion.estado == PROGRAMADA,
++                    Notificacion.fecha_programada > ahora,
++                )
++            )
++        )
++
++    def programadas_vencidas(self, id_usuario: uuid.UUID, ahora: datetime) -> list[Notificacion]:
++        """PROGRAMADA cuya hora ya llegó: hay que decidir si cuentan como enviadas o se cancelan."""
++        return list(
++            self.db.scalars(
++                select(Notificacion).where(
++                    Notificacion.id_usuario == id_usuario,
++                    Notificacion.estado == PROGRAMADA,
++                    Notificacion.fecha_programada <= ahora,
++                )
++            )
++        )
++
++    def no_canceladas_entre(self, id_usuario: uuid.UUID, desde: datetime, hasta: datetime) -> list[Notificacion]:
++        return list(
++            self.db.scalars(
++                select(Notificacion).where(
++                    Notificacion.id_usuario == id_usuario,
++                    Notificacion.estado != CANCELADA,
++                    Notificacion.fecha_programada >= desde,
++                    Notificacion.fecha_programada <= hasta,
++                )
++            )
++        )
++
++    def agregar(self, notificacion: Notificacion) -> None:
++        self.db.add(notificacion)
++
++    def listar(
++        self,
++        id_usuario: uuid.UUID,
++        estado: str | None = None,
++        id_tarea: uuid.UUID | None = None,
++        limite: int = 100,
++    ) -> list[Notificacion]:
++        consulta = select(Notificacion).where(Notificacion.id_usuario == id_usuario)
++        if estado is not None:
++            consulta = consulta.where(Notificacion.estado == estado)
++        if id_tarea is not None:
++            consulta = consulta.where(Notificacion.id_tarea == id_tarea)
++        consulta = consulta.order_by(Notificacion.fecha_programada.asc(), Notificacion.id_notificacion.asc())
++        return list(self.db.scalars(consulta.limit(limite)))
+diff --git a/backend/app/modules/notificaciones/router.py b/backend/app/modules/notificaciones/router.py
+new file mode 100644
+index 0000000..af50a6d
+--- /dev/null
++++ b/backend/app/modules/notificaciones/router.py
+@@ -0,0 +1,37 @@
++"""Endpoints de RF-12 / RF-13. Todos exigen sesión y solo devuelven datos del usuario autenticado."""
++import uuid
++from typing import Annotated
++
++from fastapi import APIRouter, Depends, Query
++from sqlalchemy.orm import Session
++
++from app.core.dependencies import get_db
++from app.core.tiempo import ahora_utc
++from app.modules.auth.dependencies import get_usuario_actual
++from app.modules.notificaciones.schemas import EstadoNotificacion, NotificacionSalida
++from app.modules.notificaciones.service import NotificacionService
++from app.modules.usuarios.models import Usuario
++
++router = APIRouter(prefix="/notificaciones", tags=["Notificaciones"])
++
++UsuarioActual = Annotated[Usuario, Depends(get_usuario_actual)]
++BaseDatos = Annotated[Session, Depends(get_db)]
++
++
++@router.post("/sincronizar", response_model=list[NotificacionSalida])
++def sincronizar(usuario: UsuarioActual, db: BaseDatos):
++    """Actualiza el plan y devuelve los avisos PROGRAMADA futuros para que la app los programe en el
++    teléfono. La app debe REEMPLAZAR todos sus avisos locales por esta lista (lo que no viene, se quita)."""
++    return NotificacionService(db).sincronizar(usuario, ahora_utc())
++
++
++@router.get("", response_model=list[NotificacionSalida])
++def listar(
++    usuario: UsuarioActual,
++    db: BaseDatos,
++    estado: Annotated[EstadoNotificacion | None, Query()] = None,
++    id_tarea: Annotated[uuid.UUID | None, Query()] = None,
++    limite: Annotated[int, Query(ge=1, le=500)] = 100,
++):
++    """Consulta (solo lectura) de las notificaciones del usuario, ordenadas por hora programada."""
++    return NotificacionService(db).listar(usuario, estado, id_tarea, limite)
+diff --git a/backend/app/modules/notificaciones/schemas.py b/backend/app/modules/notificaciones/schemas.py
+new file mode 100644
+index 0000000..fb6413c
+--- /dev/null
++++ b/backend/app/modules/notificaciones/schemas.py
+@@ -0,0 +1,24 @@
++import uuid
++from datetime import datetime
++from typing import Literal
++
++from pydantic import BaseModel, ConfigDict
++
++EstadoNotificacion = Literal["PROGRAMADA", "ENVIADA", "RESPONDIDA", "IGNORADA", "CANCELADA"]
++
++
++class NotificacionSalida(BaseModel):
++    model_config = ConfigDict(from_attributes=True)
++
++    id_notificacion: uuid.UUID
++    id_tarea: uuid.UUID | None
++    tipo: str
++    nivel_intensidad: int | None
++    mensaje: str
++    requiere_accion: bool
++    es_aviso_final: bool
++    estado: EstadoNotificacion
++    fecha_generacion: datetime
++    fecha_programada: datetime
++    fecha_envio: datetime | None
++    fecha_cancelacion: datetime | None
+diff --git a/backend/app/modules/notificaciones/service.py b/backend/app/modules/notificaciones/service.py
+new file mode 100644
+index 0000000..10500cb
+--- /dev/null
++++ b/backend/app/modules/notificaciones/service.py
+@@ -0,0 +1,198 @@
++"""Lógica de RF-12 (generar notificaciones) y RF-13 (escalar su frecuencia).
++
++Generar ≠ entregar ≠ mostrar (DECISIONES.md §4.1):
++1. GENERAR (aquí): el backend calcula el plan de avisos y lo guarda en `notificacion` como PROGRAMADA.
++2. ENTREGAR: la app llama a `POST /notificaciones/sincronizar`, recibe los avisos futuros y los programa
++   en el dispositivo. Se anota `fecha_sincronizacion`.
++3. MOSTRAR: lo hace el sistema operativo a la hora programada. El backend no puede confirmarlo; cuando la
++   hora pasa y el aviso estaba sincronizado se registra como ENVIADA (aproximación documentada).
++
++El plan se recalcula de forma idempotente (`replanificar`) cada vez que algo lo afecta: crear, editar,
++completar, reabrir o eliminar una tarea; cambiar la preferencia de recordatorios o el idioma; y al
++sincronizar. Las llamadas se hacen DENTRO de la transacción de la operación que lo provoca: si la
++operación falla, el plan tampoco cambia.
++"""
++import uuid
++from datetime import date, datetime, time
++
++from sqlalchemy import select
++from sqlalchemy.orm import Session
++
++from app.core.config import settings
++from app.core.tiempo import zona_horaria
++from app.modules.historial import tipos as tipos_evento
++from app.modules.historial.repository import HistorialRepository
++from app.modules.notificaciones import planificador as plan
++from app.modules.notificaciones.mensajes import construir_mensaje
++from app.modules.notificaciones.models import Notificacion
++from app.modules.notificaciones.repository import CANCELADA, ENVIADA, NotificacionRepository
++from app.modules.tareas.enums import EstadoTarea
++from app.modules.tareas.models import Tarea
++from app.modules.usuarios.models import PreferenciaNotificacion, Usuario
++
++PERFIL_POR_DEFECTO = "equilibrado"
++
++
++def _hora(texto: str) -> time:
++    h, m = texto.split(":")
++    return time(int(h), int(m))
++
++
++def parametros_para(perfil: str) -> plan.ParametrosPlan:
++    """Traduce la configuración (core/config.py) y el perfil del usuario a parámetros del planificador."""
++    s = settings
++    perfil = perfil if perfil in s.notif_intervalos_horas else PERFIL_POR_DEFECTO
++    return plan.ParametrosPlan(
++        intervalos_horas=s.notif_intervalos_horas[perfil],
++        maximo_diario=s.notif_maximo_diario.get(perfil, 8),
++        dias_correctiva=s.notif_correctiva_dias.get(perfil, 0),
++        umbral_critica_horas=s.notif_umbral_critica_horas,
++        umbral_urgente_horas=s.notif_umbral_urgente_horas,
++        umbral_recordatorio_horas=s.notif_umbral_recordatorio_horas,
++        aviso_final_minutos=s.notif_aviso_final_minutos,
++        separacion_minima_minutos=s.notif_separacion_minima_minutos,
++        silencio_inicio=_hora(s.notif_silencio_inicio),
++        silencio_fin=_hora(s.notif_silencio_fin),
++        silencio_alternativa=_hora(s.notif_silencio_alternativa),
++        correctiva_primera_horas=s.notif_correctiva_primera_horas,
++        correctiva_hora_diaria=_hora(s.notif_correctiva_hora_diaria),
++        horizonte_horas=s.notif_horizonte_horas,
++    )
++
++
++class NotificacionService:
++    def __init__(self, db: Session):
++        self.db = db
++        self.notificaciones = NotificacionRepository(db)
++        self.historial = HistorialRepository(db)
++
++    # ---- RF-13 regla 5: registrar las enviadas ---------------------------------------------
++    def registrar_enviadas(self, usuario: Usuario, ahora: datetime) -> None:
++        """Avisos PROGRAMADA cuya hora ya llegó:
++        - sincronizados antes de su hora -> ENVIADA (+ evento NOTIFICACION_ENVIADA en el historial);
++        - nunca sincronizados -> CANCELADA (no pudieron llegar al teléfono)."""
++        for n in self.notificaciones.programadas_vencidas(usuario.id_usuario, ahora):
++            if n.fecha_sincronizacion is not None and n.fecha_sincronizacion <= n.fecha_programada:
++                n.estado = ENVIADA
++                n.fecha_envio = n.fecha_programada
++                self.historial.registrar(
++                    id_usuario=usuario.id_usuario,
++                    id_tarea=n.id_tarea,
++                    id_notificacion=n.id_notificacion,
++                    tipo_evento=tipos_evento.NOTIFICACION_ENVIADA,
++                    datos={"tipo": n.tipo, "nivel_intensidad": n.nivel_intensidad},
++                    fecha_evento=n.fecha_programada,
++                    origen="SISTEMA",
++                )
++            else:
++                n.estado = CANCELADA
++                n.fecha_cancelacion = ahora
++        self.db.flush()
++
++    # ---- RF-12 y RF-13: generar / actualizar / cancelar --------------------------------------
++    def replanificar(self, usuario: Usuario, ahora: datetime) -> None:
++        """Deja en la BD exactamente los avisos futuros que corresponden. Idempotente: ejecutarla dos veces
++        seguidas no cambia nada. No hace commit (lo hace quien la llama)."""
++        # Bloquea la fila del usuario: dos replanificaciones simultáneas no pueden duplicar avisos.
++        self.db.execute(select(Usuario.id_usuario).where(Usuario.id_usuario == usuario.id_usuario).with_for_update())
++        self.db.flush()
++        self.registrar_enviadas(usuario, ahora)
++
++        zona = zona_horaria(usuario.zona_horaria)
++        pref = self.db.get(PreferenciaNotificacion, usuario.id_usuario)
++        activas = pref.notificaciones_activas if pref else True
++        parametros = parametros_para(pref.perfil_recordatorios if pref else PERFIL_POR_DEFECTO)
++
++        tareas = {t.id_tarea: t for t in self._tareas_abiertas(usuario.id_usuario)}
++        deseados: list[plan.Aviso] = []
++        if activas:
++            deseados = plan.planificar(
++                [plan.TareaPlan(t.id_tarea, t.titulo, t.fecha_limite, t.prioridad) for t in tareas.values()],
++                ahora,
++                zona,
++                parametros,
++                self._ya_usados(usuario.id_usuario, ahora, zona),
++            )
++
++        existentes = {(n.id_tarea, n.fecha_programada): n for n in self.notificaciones.programadas_futuras(usuario.id_usuario, ahora)}
++        claves_deseadas = set()
++        for aviso in deseados:
++            tarea = tareas[aviso.id_tarea]
++            clave = (aviso.id_tarea, aviso.fecha_programada)
++            claves_deseadas.add(clave)
++            mensaje = construir_mensaje(aviso.tipo, aviso.es_aviso_final, tarea.titulo, tarea.fecha_limite, zona, usuario.idioma)
++            actual = existentes.get(clave)
++            if actual is None:
++                self.notificaciones.agregar(
++                    Notificacion(
++                        id_usuario=usuario.id_usuario,
++                        id_tarea=aviso.id_tarea,
++                        tipo=aviso.tipo,
++                        nivel_intensidad=aviso.nivel,
++                        mensaje=mensaje,
++                        requiere_accion=False,  # lo definirá RF-14 (acciones desde la notificación)
++                        es_aviso_final=aviso.es_aviso_final,
++                        estado="PROGRAMADA",
++                        fecha_generacion=ahora,
++                        fecha_programada=aviso.fecha_programada,
++                    )
++                )
++            elif (actual.tipo, actual.mensaje, actual.es_aviso_final) != (aviso.tipo, mensaje, aviso.es_aviso_final):
++                actual.tipo = aviso.tipo
++                actual.nivel_intensidad = aviso.nivel
++                actual.mensaje = mensaje
++                actual.es_aviso_final = aviso.es_aviso_final
++                actual.fecha_sincronizacion = None  # el teléfono tiene una versión vieja: debe volver a sincronizar
++
++        # RF-13 regla 4: lo que ya no corresponde (tarea completada/eliminada, fecha cambiada, preferencias) se cancela.
++        for clave, n in existentes.items():
++            if clave not in claves_deseadas:
++                n.estado = CANCELADA
++                n.fecha_cancelacion = ahora
++        self.db.flush()
++
++    def sincronizar(self, usuario: Usuario, ahora: datetime) -> list[Notificacion]:
++        """Entrega al dispositivo el plan vigente. La app reemplaza TODOS sus avisos locales por esta lista."""
++        self.replanificar(usuario, ahora)
++        vigentes = sorted(self.notificaciones.programadas_futuras(usuario.id_usuario, ahora), key=lambda n: n.fecha_programada)
++        for n in vigentes:
++            n.fecha_sincronizacion = ahora
++        self.db.commit()
++        return vigentes
++
++    def listar(self, usuario: Usuario, estado: str | None, id_tarea: uuid.UUID | None, limite: int) -> list[Notificacion]:
++        return self.notificaciones.listar(usuario.id_usuario, estado, id_tarea, limite)
++
++    # ---- auxiliares ----------------------------------------------------------------------
++    def _tareas_abiertas(self, id_usuario: uuid.UUID) -> list[Tarea]:
++        # RF-12 reglas 1 y 4: solo tareas no completadas; RF-06 regla 6: ni eliminadas.
++        return list(
++            self.db.scalars(
++                select(Tarea).where(
++                    Tarea.id_usuario == id_usuario,
++                    Tarea.fecha_eliminacion.is_(None),
++                    Tarea.estado != EstadoTarea.COMPLETADA.value,
++                )
++            )
++        )
++
++    def _ya_usados(self, id_usuario: uuid.UUID, ahora: datetime, zona) -> dict[date, int]:
++        """Avisos de HOY (día local) cuya hora ya pasó y no se cancelaron: ocupan cupo del máximo diario."""
++        inicio_dia = datetime.combine(ahora.astimezone(zona).date(), time.min, tzinfo=zona)
++        usados: dict[date, int] = {}
++        for n in self.notificaciones.no_canceladas_entre(id_usuario, inicio_dia, ahora):
++            dia = n.fecha_programada.astimezone(zona).date()
++            usados[dia] = usados.get(dia, 0) + 1
++        return usados
++
++
++def procesar_todos(db: Session, ahora: datetime) -> int:
++    """Proceso programado (DECISIONES §10): registra enviadas y extiende el plan de todos los usuarios activos.
++    Idempotente. Se ejecuta con `python -m app.modules.notificaciones.procesos`."""
++    usuarios = list(db.scalars(select(Usuario).where(Usuario.activo.is_(True))))
++    servicio = NotificacionService(db)
++    for usuario in usuarios:
++        servicio.replanificar(usuario, ahora)
++        db.commit()
++    return len(usuarios)
++
+diff --git a/backend/app/modules/tareas/service.py b/backend/app/modules/tareas/service.py
+index ce130af..aa4e32e 100644
+--- a/backend/app/modules/tareas/service.py
++++ b/backend/app/modules/tareas/service.py
+@@ -1,19 +1,23 @@
+ """Lógica de negocio de tareas: RF-04 (crear), RF-05 (editar), RF-06 (eliminar), RF-07 (consultar/filtrar),
+ RF-08 (fecha límite), RF-09 (prioridad) y RF-11 (asociar con materia).
++
++RF-32: cada operación escribe sus eventos de historial en la MISMA transacción que el cambio; si algo falla
++no queda ni el cambio ni el evento. RF-12/RF-13: al final de cada operación se recalcula el plan de avisos
++del usuario, también dentro de la transacción.
+ """
+ import uuid
+ from datetime import date, datetime, time, timedelta
+ from typing import Any
+-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
++from zoneinfo import ZoneInfo
+ 
+ from sqlalchemy.orm import Session
+ 
+-from app.core.config import settings
+ from app.core.errors import ErrorValidacion, NoEncontrado
+-from app.core.tiempo import ahora_utc
++from app.core.tiempo import ahora_utc, zona_horaria
+ from app.modules.historial import tipos as tipos_evento
+ from app.modules.historial.repository import HistorialRepository
+ from app.modules.materias.repository import MateriaRepository
++from app.modules.notificaciones.service import NotificacionService
+ from app.modules.tareas.enums import PRIORIDAD_A_NUMERO, EstadoTarea, Prioridad
+ from app.modules.tareas.models import Tarea
+ from app.modules.tareas.reglas import estado_efectivo, validar_fecha_limite_futura
+@@ -44,10 +48,7 @@ def _a_json(valor: Any) -> Any:
+ 
+ 
+ def _zona_del_usuario(usuario: Usuario) -> ZoneInfo:
+-    try:
+-        return ZoneInfo(usuario.zona_horaria)
+-    except ZoneInfoNotFoundError:
+-        return ZoneInfo(settings.zona_horaria_defecto)
++    return zona_horaria(usuario.zona_horaria)
+ 
+ 
+ class TareaService:
+@@ -56,6 +57,7 @@ class TareaService:
+         self.tareas = TareaRepository(db)
+         self.materias = MateriaRepository(db)
+         self.historial = HistorialRepository(db)
++        self.notificaciones = NotificacionService(db)
+ 
+     # ---- RF-04, RF-08, RF-09, RF-11 -----------------------------------------------------
+     def crear(self, usuario: Usuario, datos: TareaCrear) -> Tarea:
+@@ -75,6 +77,20 @@ class TareaService:
+             fecha_limite_original=datos.fecha_limite,
+             fecha_actualizacion=ahora,
+         )
++        self.historial.registrar(  # RF-32: creación
++            id_usuario=usuario.id_usuario,
++            id_tarea=tarea.id_tarea,
++            tipo_evento=tipos_evento.TAREA_CREADA,
++            datos={
++                "titulo": tarea.titulo,
++                "prioridad": tarea.prioridad,
++                "estado": tarea.estado,
++                "fecha_limite": _a_json(tarea.fecha_limite),
++                "id_materia": _a_json(tarea.id_materia),
++            },
++            fecha_evento=ahora,
++        )
++        self.notificaciones.replanificar(usuario, ahora)  # RF-12: primer ciclo de avisos
+         self.db.commit()
+         return tarea
+ 
+@@ -120,6 +136,7 @@ class TareaService:
+         ahora = ahora_utc()
+         enviados = datos.model_fields_set
+         cambios: dict[str, tuple[Any, Any]] = {}  # campo -> (valor_antes, valor_despues)
++        estado_efectivo_antes = estado_efectivo(tarea, ahora)
+ 
+         # Solo se registran y validan los campos que REALMENTE cambian. Así, editar una tarea
+         # vencida sin tocar su fecha límite no obliga a cambiarla (y reenviar el mismo valor tampoco).
+@@ -147,6 +164,15 @@ class TareaService:
+         if "estado" in enviados:
+             self._aplicar_estado(tarea, datos.estado, ahora, cambios)
+ 
++        # TAR-09 (DECISIONES §5.2, protege RF-13 reglas 6-7): una tarea COMPLETADA no puede cambiar su
++        # fecha límite; primero hay que reabrirla. Si no, una entrega con retraso podría volverse "a tiempo".
++        estado_final = cambios.get("estado", (None, tarea.estado))[1]
++        if "fecha_limite" in cambios and estado_final == EstadoTarea.COMPLETADA.value:
++            raise ErrorValidacion(
++                "Una tarea completada no puede cambiar su fecha límite. Reábrela primero.",
++                "FECHA_TAREA_COMPLETADA",
++            )
++
+         if not cambios:
+             return tarea  # nada cambió: no se escribe nada ni se llena el historial
+ 
+@@ -163,9 +189,65 @@ class TareaService:
+             },
+             fecha_evento=ahora,
+         )
++        self._registrar_eventos_especificos(usuario, tarea, cambios, estado_efectivo_antes, ahora)
++        self.notificaciones.replanificar(usuario, ahora)  # RF-13: recalcula o cancela los avisos
+         self.db.commit()
+         return tarea
+ 
++    def _registrar_eventos_especificos(
++        self,
++        usuario: Usuario,
++        tarea: Tarea,
++        cambios: dict[str, tuple[Any, Any]],
++        estado_efectivo_antes: EstadoTarea,
++        ahora: datetime,
++    ) -> None:
++        """RF-32: además de TAREA_EDITADA, un evento por cada hecho relevante (como máximo uno de cada tipo)."""
++
++        def registrar(tipo: str, datos: dict) -> None:
++            self.historial.registrar(
++                id_usuario=usuario.id_usuario,
++                id_tarea=tarea.id_tarea,
++                tipo_evento=tipo,
++                datos=datos,
++                fecha_evento=ahora,
++            )
++
++        if "fecha_limite" in cambios:
++            antes, despues = cambios["fecha_limite"]
++            abierta_no_vencida = estado_efectivo_antes in (EstadoTarea.PENDIENTE, EstadoTarea.EN_PROGRESO)
++            # DECISIONES §5.1 punto 5: mover a una fecha POSTERIOR una tarea abierta y no vencida es posponerla.
++            tipo = tipos_evento.TAREA_POSPUESTA if abierta_no_vencida and despues > antes else tipos_evento.TAREA_REPROGRAMADA
++            registrar(
++                tipo,
++                {
++                    "antes": _a_json(antes),
++                    "despues": _a_json(despues),
++                    "fecha_limite_original": _a_json(tarea.fecha_limite_original),
++                    "estaba_vencida": estado_efectivo_antes == EstadoTarea.VENCIDA,
++                },
++            )
++
++        if "estado" in cambios:
++            antes, despues = cambios["estado"]
++            if despues == EstadoTarea.COMPLETADA.value:
++                # RF-12 regla 5: a tiempo si se completa antes o exactamente en la fecha límite. Se compara con la
++                # fecha límite VIGENTE ANTES de esta operación, para que no se pueda mover la fecha y completar a la vez.
++                limite = cambios["fecha_limite"][0] if "fecha_limite" in cambios else tarea.fecha_limite
++                registrar(
++                    tipos_evento.TAREA_COMPLETADA,
++                    {
++                        "estado_anterior": antes,
++                        "fecha_completada": _a_json(ahora),
++                        "fecha_limite": _a_json(limite),
++                        "a_tiempo": ahora <= limite,  # False = completada con retraso (RF-13 reglas 6-7)
++                    },
++                )
++            elif antes == EstadoTarea.COMPLETADA.value:
++                registrar(tipos_evento.TAREA_REABIERTA, {"antes": antes, "despues": despues})
++            else:
++                registrar(tipos_evento.TAREA_ESTADO_CAMBIADO, {"antes": antes, "despues": despues})
++
+     @staticmethod
+     def _aplicar_estado(
+         tarea: Tarea, nuevo: EstadoTarea, ahora: datetime, cambios: dict[str, tuple[Any, Any]]
+@@ -200,6 +282,7 @@ class TareaService:
+             datos={"titulo": tarea.titulo},
+             fecha_evento=ahora,
+         )
++        self.notificaciones.replanificar(usuario, ahora)  # RF-06 regla 6: sin avisos para tareas eliminadas
+         self.db.commit()
+ 
+     # ---- auxiliar RF-11 ----------------------------------------------------------------
+diff --git a/backend/app/modules/usuarios/service.py b/backend/app/modules/usuarios/service.py
+index 895e020..e038964 100644
+--- a/backend/app/modules/usuarios/service.py
++++ b/backend/app/modules/usuarios/service.py
+@@ -8,6 +8,7 @@ from datetime import datetime, timezone
+ from sqlalchemy.orm import Session
+ 
+ from app.core.errors import NoEncontrado
++from app.modules.notificaciones.service import NotificacionService
+ from app.modules.usuarios.imagen import TIPO_SALIDA, procesar_foto
+ from app.modules.usuarios.models import FotoPerfil, PreferenciaNotificacion, Usuario
+ from app.modules.usuarios.repository import UsuarioRepository
+@@ -29,8 +30,10 @@ class PerfilService:
+         campos = datos.model_fields_set
+         if "nombre" in campos:
+             usuario.nombre = datos.nombre  # None borra el nombre; el esquema ya lo normalizó
+-        if "idioma" in campos and datos.idioma is not None:
++        if "idioma" in campos and datos.idioma is not None and datos.idioma != usuario.idioma:
+             usuario.idioma = datos.idioma
++            # Los avisos pendientes se regeneran en el nuevo idioma (RF-12 regla 3).
++            NotificacionService(self.db).replanificar(usuario, _ahora())
+         self.db.commit()
+         self.db.refresh(usuario)
+         return usuario
+@@ -53,6 +56,9 @@ class PerfilService:
+         )
+         if usuario.personalizacion_completada_en is None:
+             usuario.personalizacion_completada_en = _ahora()
++        self.db.flush()
++        # RF-12 regla 6 / RF-13: el perfil cambia los intervalos; desactivar cancela los avisos programados.
++        NotificacionService(self.db).replanificar(usuario, _ahora())
+         self.db.commit()
+         self.db.refresh(pref)
+         return pref
+diff --git a/backend/migrations/versions/0003_notificaciones_rf_12_13.py b/backend/migrations/versions/0003_notificaciones_rf_12_13.py
+new file mode 100644
+index 0000000..dd145e5
+--- /dev/null
++++ b/backend/migrations/versions/0003_notificaciones_rf_12_13.py
+@@ -0,0 +1,66 @@
++"""notificaciones RF-12/RF-13: tabla notificacion e historial_evento.id_notificacion
++
++Toma la parte de notificaciones del parche `entregas/paso1_migracion_0003.patch` (revisada) y agrega
++fecha_generacion, fecha_sincronizacion, fecha_cancelacion, es_aviso_final y el índice único parcial contra
++duplicados. NO incluye sesion_enfoque, gamificación ni análisis de riesgo (fuera de alcance). Solo agrega
++estructura: no modifica ni borra datos existentes.
++
++Revision ID: 0003
++Revises: 0002
++Create Date: 2026-11-06 04:30:00
++"""
++from alembic import op
++import sqlalchemy as sa
++
++revision = '0003'
++down_revision = '0002'
++branch_labels = None
++depends_on = None
++
++
++def upgrade() -> None:
++    op.create_table('notificacion',
++    sa.Column('id_notificacion', sa.Uuid(), nullable=False),
++    sa.Column('id_usuario', sa.Uuid(), nullable=False),
++    sa.Column('id_tarea', sa.Uuid(), nullable=True),
++    sa.Column('tipo', sa.String(length=20), nullable=False),
++    sa.Column('nivel_intensidad', sa.SmallInteger(), nullable=True),
++    sa.Column('mensaje', sa.Text(), nullable=False),
++    sa.Column('requiere_accion', sa.Boolean(), server_default=sa.text('false'), nullable=False),
++    sa.Column('es_aviso_final', sa.Boolean(), server_default=sa.text('false'), nullable=False),
++    sa.Column('estado', sa.String(length=15), server_default='PROGRAMADA', nullable=False),
++    sa.Column('fecha_generacion', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
++    sa.Column('fecha_programada', sa.DateTime(timezone=True), nullable=False),
++    sa.Column('fecha_sincronizacion', sa.DateTime(timezone=True), nullable=True),
++    sa.Column('fecha_envio', sa.DateTime(timezone=True), nullable=True),
++    sa.Column('fecha_cancelacion', sa.DateTime(timezone=True), nullable=True),
++    sa.Column('accion_respuesta', sa.String(length=20), nullable=True),
++    sa.Column('fecha_respuesta', sa.DateTime(timezone=True), nullable=True),
++    sa.CheckConstraint("tipo IN ('RECORDATORIO', 'URGENTE', 'CRITICA', 'CORRECTIVA', 'ACUMULACION')", name=op.f('ck_notificacion_tipo_valido')),
++    sa.CheckConstraint("estado IN ('PROGRAMADA', 'ENVIADA', 'RESPONDIDA', 'IGNORADA', 'CANCELADA')", name=op.f('ck_notificacion_estado_valido')),
++    sa.CheckConstraint("accion_respuesta IN ('COMPLETAR', 'INICIAR_ENFOQUE', 'POSPONER', 'CONTINUAR_DESPUES')", name=op.f('ck_notificacion_accion_respuesta_valida')),
++    sa.CheckConstraint('nivel_intensidad BETWEEN 1 AND 4', name=op.f('ck_notificacion_nivel_intensidad_valido')),
++    sa.CheckConstraint("id_tarea IS NOT NULL OR tipo = 'ACUMULACION'", name=op.f('ck_notificacion_tarea_obligatoria_salvo_acumulacion')),
++    sa.CheckConstraint('length(trim(mensaje)) > 0', name=op.f('ck_notificacion_mensaje_no_vacio')),
++    sa.ForeignKeyConstraint(['id_tarea', 'id_usuario'], ['tarea.id_tarea', 'tarea.id_usuario'], name='fk_notificacion_tarea_del_mismo_usuario'),
++    sa.ForeignKeyConstraint(['id_usuario'], ['usuario.id_usuario'], name=op.f('fk_notificacion_id_usuario_usuario')),
++    sa.PrimaryKeyConstraint('id_notificacion', name=op.f('pk_notificacion')),
++    sa.UniqueConstraint('id_notificacion', 'id_usuario', name='uq_notificacion_id_usuario')
++    )
++    op.create_index('ix_notificacion_tarea_estado', 'notificacion', ['id_tarea', 'estado'], unique=False)
++    op.create_index('ix_notificacion_usuario_estado_programada', 'notificacion', ['id_usuario', 'estado', 'fecha_programada'], unique=False)
++    op.create_index('uq_notificacion_tarea_momento_vigente', 'notificacion', ['id_tarea', 'fecha_programada'], unique=True, postgresql_where=sa.text("estado <> 'CANCELADA'"))
++
++    op.add_column('historial_evento', sa.Column('id_notificacion', sa.Uuid(), nullable=True))
++    op.create_foreign_key('fk_historial_notificacion_del_mismo_usuario', 'historial_evento', 'notificacion', ['id_notificacion', 'id_usuario'], ['id_notificacion', 'id_usuario'])
++    op.create_index('ix_historial_evento_usuario_fecha', 'historial_evento', ['id_usuario', 'fecha_evento'], unique=False)
++
++
++def downgrade() -> None:
++    op.drop_index('ix_historial_evento_usuario_fecha', table_name='historial_evento')
++    op.drop_constraint('fk_historial_notificacion_del_mismo_usuario', 'historial_evento', type_='foreignkey')
++    op.drop_column('historial_evento', 'id_notificacion')
++    op.drop_index('uq_notificacion_tarea_momento_vigente', table_name='notificacion', postgresql_where=sa.text("estado <> 'CANCELADA'"))
++    op.drop_index('ix_notificacion_usuario_estado_programada', table_name='notificacion')
++    op.drop_index('ix_notificacion_tarea_estado', table_name='notificacion')
++    op.drop_table('notificacion')
+diff --git a/backend/tests/conftest.py b/backend/tests/conftest.py
+index da5d1b6..0f9c8cf 100644
+--- a/backend/tests/conftest.py
++++ b/backend/tests/conftest.py
+@@ -52,7 +52,7 @@ def limpiar_tablas(engine):
+     yield
+     with engine.begin() as conn:
+         conn.execute(
+-            text("TRUNCATE historial_evento, tarea, materia, sesion_autenticacion, foto_perfil, preferencia_notificacion, usuario CASCADE")
++            text("TRUNCATE historial_evento, notificacion, tarea, materia, sesion_autenticacion, foto_perfil, preferencia_notificacion, usuario CASCADE")
+         )
+ 
+ 
+diff --git a/backend/tests/test_historial_rf32.py b/backend/tests/test_historial_rf32.py
+new file mode 100644
+index 0000000..6bf2043
+--- /dev/null
++++ b/backend/tests/test_historial_rf32.py
+@@ -0,0 +1,194 @@
++"""RF-32: historial de tareas (creación, modificación, cambio de estado, finalización, reprogramación y
++eliminación), integridad y aislamiento."""
++from datetime import datetime, timedelta, timezone
++
++from sqlalchemy import select
++
++from app.modules.historial.models import HistorialEvento
++
++
++def _futuro(**delta) -> str:
++    return (datetime.now(timezone.utc) + timedelta(**delta)).isoformat()
++
++
++def crear(client, usuario, dias=3, titulo="Ensayo"):
++    r = client.post(
++        "/tareas",
++        json={"titulo": titulo, "fecha_limite": _futuro(days=dias), "prioridad": "MEDIA"},
++        headers=usuario.headers,
++    )
++    assert r.status_code == 201, r.text
++    return r.json()
++
++
++def tipos(db, id_tarea) -> list[str]:
++    db.expire_all()
++    return sorted(
++        e.tipo_evento for e in db.scalars(select(HistorialEvento).where(HistorialEvento.id_tarea == id_tarea))
++    )
++
++
++def patch(client, usuario, tarea, **cuerpo):
++    return client.patch(f"/tareas/{tarea['id_tarea']}", json=cuerpo, headers=usuario.headers)
++
++
++# ---- un evento por cada acción mínima de RF-32 --------------------------------------------------
++def test_crear_registra_tarea_creada(client, usuario_a, db):
++    tarea = crear(client, usuario_a)
++    evento = db.scalar(select(HistorialEvento).where(HistorialEvento.id_tarea == tarea["id_tarea"]))
++    assert evento.tipo_evento == "TAREA_CREADA"
++    assert evento.id_usuario == usuario_a.id
++    assert evento.origen == "USUARIO"
++    assert evento.datos["titulo"] == "Ensayo"
++    assert evento.fecha_evento is not None
++
++
++def test_editar_registra_solo_tarea_editada(client, usuario_a, db):
++    tarea = crear(client, usuario_a)
++    assert patch(client, usuario_a, tarea, titulo="Ensayo final").status_code == 200
++    assert tipos(db, tarea["id_tarea"]) == ["TAREA_CREADA", "TAREA_EDITADA"]
++
++
++def test_cambio_de_estado(client, usuario_a, db):
++    tarea = crear(client, usuario_a)
++    assert patch(client, usuario_a, tarea, estado="EN_PROGRESO").status_code == 200
++    assert tipos(db, tarea["id_tarea"]) == ["TAREA_CREADA", "TAREA_EDITADA", "TAREA_ESTADO_CAMBIADO"]
++    evento = db.scalar(select(HistorialEvento).where(HistorialEvento.tipo_evento == "TAREA_ESTADO_CAMBIADO"))
++    assert evento.datos == {"antes": "PENDIENTE", "despues": "EN_PROGRESO"}
++
++
++def test_finalizacion_a_tiempo(client, usuario_a, db):
++    tarea = crear(client, usuario_a)
++    assert patch(client, usuario_a, tarea, estado="COMPLETADA").status_code == 200
++    evento = db.scalar(select(HistorialEvento).where(HistorialEvento.tipo_evento == "TAREA_COMPLETADA"))
++    assert evento.datos["a_tiempo"] is True
++    assert evento.datos["estado_anterior"] == "PENDIENTE"
++
++
++def test_finalizacion_con_retraso_se_conserva(client, usuario_a, db, insertar_tarea):
++    """RF-13 reglas 6-7 / RF-12 regla 5: completar después de la fecha límite no cuenta como a tiempo."""
++    ahora = datetime.now(timezone.utc)
++    tarea = insertar_tarea(usuario_a.id, fecha_limite=ahora - timedelta(hours=2))
++    r = client.patch(f"/tareas/{tarea.id_tarea}", json={"estado": "COMPLETADA"}, headers=usuario_a.headers)
++    assert r.status_code == 200
++    evento = db.scalar(select(HistorialEvento).where(HistorialEvento.tipo_evento == "TAREA_COMPLETADA"))
++    assert evento.datos["a_tiempo"] is False
++
++
++def test_no_se_puede_volver_a_tiempo_moviendo_la_fecha_al_completar(client, usuario_a, db, insertar_tarea):
++    ahora = datetime.now(timezone.utc)
++    tarea = insertar_tarea(usuario_a.id, fecha_limite=ahora - timedelta(hours=2))
++    r = client.patch(
++        f"/tareas/{tarea.id_tarea}",
++        json={"estado": "COMPLETADA", "fecha_limite": _futuro(days=1)},
++        headers=usuario_a.headers,
++    )
++    # La fecha de una tarea que queda COMPLETADA no puede cambiar (TAR-09).
++    assert r.status_code == 422
++    assert r.json()["error"]["codigo"] == "FECHA_TAREA_COMPLETADA"
++
++
++def test_tarea_completada_no_cambia_su_fecha_hasta_reabrirla(client, usuario_a, db):
++    tarea = crear(client, usuario_a)
++    patch(client, usuario_a, tarea, estado="COMPLETADA")
++    r = patch(client, usuario_a, tarea, fecha_limite=_futuro(days=9))
++    assert r.status_code == 422 and r.json()["error"]["codigo"] == "FECHA_TAREA_COMPLETADA"
++    # Reabrir y cambiar la fecha en la misma operación sí se permite.
++    r = patch(client, usuario_a, tarea, estado="PENDIENTE", fecha_limite=_futuro(days=9))
++    assert r.status_code == 200
++    assert "TAREA_REABIERTA" in tipos(db, tarea["id_tarea"])
++
++
++def test_reabrir(client, usuario_a, db):
++    tarea = crear(client, usuario_a)
++    patch(client, usuario_a, tarea, estado="COMPLETADA")
++    patch(client, usuario_a, tarea, estado="PENDIENTE")
++    assert tipos(db, tarea["id_tarea"]).count("TAREA_REABIERTA") == 1
++
++
++def test_posponer_a_una_fecha_posterior(client, usuario_a, db):
++    tarea = crear(client, usuario_a, dias=3)
++    assert patch(client, usuario_a, tarea, fecha_limite=_futuro(days=5)).status_code == 200
++    evento = db.scalar(select(HistorialEvento).where(HistorialEvento.tipo_evento == "TAREA_POSPUESTA"))
++    assert evento.datos["antes"] < evento.datos["despues"]
++    assert evento.datos["fecha_limite_original"] == evento.datos["antes"]
++    assert "TAREA_REPROGRAMADA" not in tipos(db, tarea["id_tarea"])
++
++
++def test_adelantar_la_fecha_es_reprogramacion(client, usuario_a, db):
++    tarea = crear(client, usuario_a, dias=5)
++    assert patch(client, usuario_a, tarea, fecha_limite=_futuro(days=2)).status_code == 200
++    assert "TAREA_REPROGRAMADA" in tipos(db, tarea["id_tarea"])
++    assert "TAREA_POSPUESTA" not in tipos(db, tarea["id_tarea"])
++
++
++def test_reprogramar_una_tarea_vencida(client, usuario_a, db, insertar_tarea):
++    tarea = insertar_tarea(usuario_a.id, fecha_limite=datetime.now(timezone.utc) - timedelta(hours=3))
++    r = client.patch(f"/tareas/{tarea.id_tarea}", json={"fecha_limite": _futuro(days=2)}, headers=usuario_a.headers)
++    assert r.status_code == 200
++    evento = db.scalar(select(HistorialEvento).where(HistorialEvento.tipo_evento == "TAREA_REPROGRAMADA"))
++    assert evento.datos["estaba_vencida"] is True
++
++
++def test_eliminar_registra_y_conserva_el_historial(client, usuario_a, db):
++    tarea = crear(client, usuario_a)
++    patch(client, usuario_a, tarea, titulo="Otro")
++    assert client.delete(f"/tareas/{tarea['id_tarea']}", headers=usuario_a.headers).status_code == 204
++    # RF-06 regla 5 / RF-32 regla 12: los registros anteriores siguen ahí.
++    assert tipos(db, tarea["id_tarea"]) == ["TAREA_CREADA", "TAREA_EDITADA", "TAREA_ELIMINADA"]
++
++
++# ---- una operación, un evento de cada tipo -------------------------------------------------------
++def test_una_operacion_no_duplica_eventos(client, usuario_a, db):
++    tarea = crear(client, usuario_a, dias=3)
++    r = patch(client, usuario_a, tarea, titulo="Nuevo", estado="EN_PROGRESO", fecha_limite=_futuro(days=4))
++    assert r.status_code == 200
++    assert tipos(db, tarea["id_tarea"]) == [
++        "TAREA_CREADA", "TAREA_EDITADA", "TAREA_ESTADO_CAMBIADO", "TAREA_POSPUESTA",
++    ]
++
++
++def test_una_operacion_fallida_no_deja_eventos(client, usuario_a, db):
++    tarea = crear(client, usuario_a)
++    antes = tipos(db, tarea["id_tarea"])
++    pasada = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
++    r = patch(client, usuario_a, tarea, titulo="No debe quedar", fecha_limite=pasada)
++    assert r.status_code == 422
++    assert tipos(db, tarea["id_tarea"]) == antes
++
++
++def test_el_historial_no_cambia_con_ediciones_posteriores(client, usuario_a, db):
++    tarea = crear(client, usuario_a, titulo="Original")
++    creado = db.scalar(select(HistorialEvento).where(HistorialEvento.tipo_evento == "TAREA_CREADA"))
++    datos_originales = dict(creado.datos)
++    patch(client, usuario_a, tarea, titulo="Cambiado")
++    db.expire_all()
++    assert db.get(HistorialEvento, creado.id_evento).datos == datos_originales
++
++
++# ---- consulta y aislamiento ---------------------------------------------------------------------
++def test_consultar_historial_de_una_tarea(client, usuario_a):
++    tarea = crear(client, usuario_a)
++    patch(client, usuario_a, tarea, estado="COMPLETADA")
++    r = client.get(f"/tareas/{tarea['id_tarea']}/historial", headers=usuario_a.headers)
++    assert r.status_code == 200
++    eventos = r.json()
++    assert eventos[0]["tipo_evento"] == "TAREA_CREADA"
++    assert {"TAREA_EDITADA", "TAREA_COMPLETADA"} <= {e["tipo_evento"] for e in eventos}
++    fechas = [e["fecha_evento"] for e in eventos]
++    assert fechas == sorted(fechas)
++
++
++def test_historial_ajeno_no_es_visible(client, usuario_a, usuario_b):
++    tarea = crear(client, usuario_a)
++    r = client.get(f"/tareas/{tarea['id_tarea']}/historial", headers=usuario_b.headers)
++    assert r.status_code == 404
++    assert client.get(f"/tareas/{tarea['id_tarea']}/historial").status_code == 401
++
++
++def test_cada_usuario_solo_genera_eventos_propios(client, usuario_a, usuario_b, db):
++    tarea = crear(client, usuario_a)
++    patch(client, usuario_b, tarea, titulo="Hackeada")  # 404
++    client.delete(f"/tareas/{tarea['id_tarea']}", headers=usuario_b.headers)  # 404
++    db.expire_all()
++    assert all(e.id_usuario == usuario_a.id for e in db.scalars(select(HistorialEvento)))
+diff --git a/backend/tests/test_notificaciones.py b/backend/tests/test_notificaciones.py
+new file mode 100644
+index 0000000..c0cc137
+--- /dev/null
++++ b/backend/tests/test_notificaciones.py
+@@ -0,0 +1,284 @@
++"""RF-12 (generar notificaciones) y RF-13 (escalar frecuencia) contra PostgreSQL real."""
++from datetime import datetime, time, timedelta, timezone
++from zoneinfo import ZoneInfo
++
++import pytest
++from sqlalchemy import select
++from sqlalchemy.exc import IntegrityError
++
++from app.modules.historial.models import HistorialEvento
++from app.modules.notificaciones.models import Notificacion
++from app.modules.notificaciones.service import NotificacionService
++from app.modules.usuarios.models import Usuario
++
++
++def _futuro(**delta) -> str:
++    return (datetime.now(timezone.utc) + timedelta(**delta)).isoformat()
++
++
++def crear(client, usuario, titulo="Ensayo de historia", **delta):
++    delta = delta or {"days": 2}
++    r = client.post(
++        "/tareas",
++        json={"titulo": titulo, "fecha_limite": _futuro(**delta), "prioridad": "ALTA"},
++        headers=usuario.headers,
++    )
++    assert r.status_code == 201, r.text
++    return r.json()
++
++
++def notifs(db, id_tarea=None, estado=None):
++    db.expire_all()
++    q = select(Notificacion)
++    if id_tarea is not None:
++        q = q.where(Notificacion.id_tarea == id_tarea)
++    if estado is not None:
++        q = q.where(Notificacion.estado == estado)
++    return list(db.scalars(q.order_by(Notificacion.fecha_programada)))
++
++
++def preferencia(client, usuario, perfil="equilibrado", activas=True):
++    r = client.put(
++        "/usuarios/me/preferencia-notificacion",
++        json={"perfil_recordatorios": perfil, "notificaciones_activas": activas},
++        headers=usuario.headers,
++    )
++    assert r.status_code == 200, r.text
++
++
++# ---- RF-12: generación y asociación -----------------------------------------------------------
++def test_crear_tarea_genera_notificaciones_programadas(client, usuario_a, db):
++    tarea = crear(client, usuario_a)
++    avisos = notifs(db, tarea["id_tarea"])
++    assert avisos, "debe existir al menos un aviso"
++    ahora = datetime.now(timezone.utc)
++    for n in avisos:
++        assert n.estado == "PROGRAMADA"  # generada, todavía NO entregada
++        assert n.id_usuario == usuario_a.id
++        assert str(n.id_tarea) == tarea["id_tarea"]
++        assert "Ensayo de historia" in n.mensaje  # RF-12 regla 3
++        assert n.fecha_generacion is not None
++        assert n.fecha_programada > ahora
++        assert n.fecha_sincronizacion is None and n.fecha_envio is None
++    assert {n.tipo for n in avisos} <= {"URGENTE", "CRITICA", "CORRECTIVA"}  # vence en 2 días
++    assert any(n.es_aviso_final for n in avisos)
++
++
++def test_niveles_escalan_conforme_se_acerca_la_fecha(client, usuario_a, db):
++    tarea = crear(client, usuario_a, days=6)
++    previos = [n for n in notifs(db, tarea["id_tarea"]) if n.tipo != "CORRECTIVA"]
++    niveles = [n.nivel_intensidad for n in previos]
++    assert niveles == sorted(niveles)  # nunca baja
++    assert {"RECORDATORIO", "URGENTE", "CRITICA"} <= {n.tipo for n in previos}
++
++
++def test_api_sincronizar_entrega_el_plan_y_marca_la_sincronizacion(client, usuario_a, db):
++    tarea = crear(client, usuario_a)
++    r = client.post("/notificaciones/sincronizar", headers=usuario_a.headers)
++    assert r.status_code == 200
++    lista = r.json()
++    assert lista and all(n["estado"] == "PROGRAMADA" and n["id_tarea"] == tarea["id_tarea"] for n in lista)
++    assert [n["fecha_programada"] for n in lista] == sorted(n["fecha_programada"] for n in lista)
++    assert all(n.fecha_sincronizacion is not None for n in notifs(db, estado="PROGRAMADA"))
++
++
++def test_endpoints_requieren_sesion(client):
++    assert client.post("/notificaciones/sincronizar").status_code == 401
++    assert client.get("/notificaciones").status_code == 401
++
++
++# ---- prevención de duplicados ------------------------------------------------------------------
++def test_sincronizar_varias_veces_no_duplica(client, usuario_a, db):
++    crear(client, usuario_a)
++    primera = client.post("/notificaciones/sincronizar", headers=usuario_a.headers).json()
++    segunda = client.post("/notificaciones/sincronizar", headers=usuario_a.headers).json()
++    assert [n["id_notificacion"] for n in primera] == [n["id_notificacion"] for n in segunda]
++    assert len(notifs(db)) == len(primera)  # no se crearon filas nuevas ni canceladas
++
++
++def test_la_bd_rechaza_dos_avisos_vigentes_en_el_mismo_momento(client, usuario_a, db):
++    tarea = crear(client, usuario_a)
++    n = notifs(db, tarea["id_tarea"])[0]
++    db.add(Notificacion(id_usuario=n.id_usuario, id_tarea=n.id_tarea, tipo="CRITICA", nivel_intensidad=3,
++                        mensaje="duplicado", fecha_programada=n.fecha_programada))
++    with pytest.raises(IntegrityError):
++        db.commit()
++    db.rollback()
++
++
++def test_la_bd_impide_asociar_la_notificacion_a_la_tarea_de_otro(client, usuario_a, usuario_b, db):
++    tarea = crear(client, usuario_a)
++    db.add(Notificacion(id_usuario=usuario_b.id, id_tarea=tarea["id_tarea"], tipo="CRITICA", nivel_intensidad=3,
++                        mensaje="x", fecha_programada=datetime.now(timezone.utc) + timedelta(hours=3)))
++    with pytest.raises(IntegrityError):
++        db.commit()
++    db.rollback()
++
++
++# ---- RF-12 regla 6 / preferencias ---------------------------------------------------------------
++def test_perfil_insistente_genera_mas_avisos_que_tranquilo(client, crear_usuario, db):
++    conteo = {}
++    for perfil in ("tranquilo", "insistente"):
++        u = crear_usuario()
++        preferencia(client, u, perfil)
++        tarea = crear(client, u, days=6)
++        conteo[perfil] = len(notifs(db, tarea["id_tarea"], "PROGRAMADA"))
++    assert conteo["tranquilo"] < conteo["insistente"]
++
++
++def test_cambiar_el_perfil_replanifica(client, usuario_a, db):
++    tarea = crear(client, usuario_a, days=6)
++    antes = len(notifs(db, tarea["id_tarea"], "PROGRAMADA"))
++    preferencia(client, usuario_a, "insistente")
++    assert len(notifs(db, tarea["id_tarea"], "PROGRAMADA")) > antes
++
++
++def test_desactivar_notificaciones_cancela_y_reactivar_regenera(client, usuario_a, db):
++    tarea = crear(client, usuario_a)
++    preferencia(client, usuario_a, activas=False)
++    assert notifs(db, tarea["id_tarea"], "PROGRAMADA") == []
++    assert all(n.estado == "CANCELADA" and n.fecha_cancelacion for n in notifs(db, tarea["id_tarea"]))
++    crear(client, usuario_a, titulo="Otra")  # con avisos desactivados no se generan
++    assert notifs(db, estado="PROGRAMADA") == []
++    preferencia(client, usuario_a, activas=True)
++    assert notifs(db, tarea["id_tarea"], "PROGRAMADA")
++
++
++# ---- RF-13 regla 4 y RF-06 regla 6: cancelación ---------------------------------------------------
++def test_completar_cancela_los_avisos_futuros(client, usuario_a, db):
++    tarea = crear(client, usuario_a)
++    client.patch(f"/tareas/{tarea['id_tarea']}", json={"estado": "COMPLETADA"}, headers=usuario_a.headers)
++    assert notifs(db, tarea["id_tarea"], "PROGRAMADA") == []
++    assert notifs(db, tarea["id_tarea"], "CANCELADA")
++    # Una tarea completada no genera nuevas notificaciones aunque se vuelva a sincronizar.
++    client.post("/notificaciones/sincronizar", headers=usuario_a.headers)
++    assert notifs(db, tarea["id_tarea"], "PROGRAMADA") == []
++
++
++def test_reabrir_vuelve_a_planificar(client, usuario_a, db):
++    tarea = crear(client, usuario_a)
++    url = f"/tareas/{tarea['id_tarea']}"
++    client.patch(url, json={"estado": "COMPLETADA"}, headers=usuario_a.headers)
++    client.patch(url, json={"estado": "PENDIENTE"}, headers=usuario_a.headers)
++    assert notifs(db, tarea["id_tarea"], "PROGRAMADA")
++
++
++def test_eliminar_cancela_los_avisos(client, usuario_a, db):
++    tarea = crear(client, usuario_a)
++    client.delete(f"/tareas/{tarea['id_tarea']}", headers=usuario_a.headers)
++    assert notifs(db, tarea["id_tarea"], "PROGRAMADA") == []
++
++
++def test_cambiar_la_fecha_limite_actualiza_el_plan(client, usuario_a, db):
++    tarea = crear(client, usuario_a, days=2)
++    viejos = {n.id_notificacion for n in notifs(db, tarea["id_tarea"], "PROGRAMADA")}
++    nueva = datetime.now(timezone.utc) + timedelta(days=4)
++    r = client.patch(f"/tareas/{tarea['id_tarea']}", json={"fecha_limite": nueva.isoformat()}, headers=usuario_a.headers)
++    assert r.status_code == 200
++    vigentes = notifs(db, tarea["id_tarea"], "PROGRAMADA")
++    final = [n for n in vigentes if n.es_aviso_final]
++    assert len(final) == 1
++    # El aviso final queda 1 h antes de la NUEVA fecha (o reubicado por silencio, nunca después de ella).
++    assert final[0].fecha_programada < nueva
++    assert any(n.estado == "CANCELADA" for n in notifs(db, tarea["id_tarea"]) if n.id_notificacion in viejos)
++
++
++def test_cambiar_el_titulo_actualiza_el_mensaje(client, usuario_a, db):
++    tarea = crear(client, usuario_a)
++    client.patch(f"/tareas/{tarea['id_tarea']}", json={"titulo": "Exposición"}, headers=usuario_a.headers)
++    assert all("Exposición" in n.mensaje for n in notifs(db, tarea["id_tarea"], "PROGRAMADA"))
++
++
++def test_idioma_del_usuario_en_el_mensaje(client, usuario_a, db):
++    tarea = crear(client, usuario_a)
++    client.patch("/usuarios/me", json={"idioma": "en"}, headers=usuario_a.headers)
++    mensajes = [n.mensaje for n in notifs(db, tarea["id_tarea"], "PROGRAMADA")]
++    assert mensajes and all("due" in m for m in mensajes)
++
++
++# ---- zonas horarias ----------------------------------------------------------------------------
++@pytest.mark.parametrize("zona", ["America/Mexico_City", "Asia/Tokyo", "UTC"])
++def test_horario_de_silencio_en_la_zona_del_usuario(client, usuario_a, db, zona):
++    db.get(Usuario, usuario_a.id).zona_horaria = zona
++    db.commit()
++    tarea = crear(client, usuario_a, days=6)
++    tz = ZoneInfo(zona)
++    avisos = notifs(db, tarea["id_tarea"], "PROGRAMADA")
++    assert avisos
++    for n in avisos:
++        assert time(7, 0) <= n.fecha_programada.astimezone(tz).time() < time(22, 0)
++
++
++# ---- RF-13 regla 5: registrar las enviadas ------------------------------------------------------
++def test_aviso_sincronizado_cuya_hora_paso_queda_enviado_y_en_el_historial(client, usuario_a, db):
++    tarea = crear(client, usuario_a, days=2)
++    usuario = db.get(Usuario, usuario_a.id)
++    servicio = NotificacionService(db)
++    ahora = datetime.now(timezone.utc)
++    servicio.sincronizar(usuario, ahora)
++    primero = notifs(db, tarea["id_tarea"], "PROGRAMADA")[0]
++    despues = primero.fecha_programada + timedelta(minutes=1)
++    servicio.registrar_enviadas(usuario, despues)
++    db.commit()
++    db.expire_all()
++    n = db.get(Notificacion, primero.id_notificacion)
++    assert n.estado == "ENVIADA" and n.fecha_envio == n.fecha_programada
++    evento = db.scalar(select(HistorialEvento).where(HistorialEvento.tipo_evento == "NOTIFICACION_ENVIADA"))
++    assert evento.id_notificacion == n.id_notificacion
++    assert evento.origen == "SISTEMA" and str(evento.id_tarea) == tarea["id_tarea"]
++    # Ejecutarlo otra vez no duplica el evento.
++    servicio.registrar_enviadas(usuario, despues)
++    db.commit()
++    assert len(db.scalars(select(HistorialEvento).where(HistorialEvento.tipo_evento == "NOTIFICACION_ENVIADA")).all()) == 1
++
++
++def test_aviso_nunca_sincronizado_no_cuenta_como_enviado(client, usuario_a, db):
++    tarea = crear(client, usuario_a, days=2)
++    usuario = db.get(Usuario, usuario_a.id)
++    primero = notifs(db, tarea["id_tarea"], "PROGRAMADA")[0]
++    NotificacionService(db).registrar_enviadas(usuario, primero.fecha_programada + timedelta(minutes=1))
++    db.commit()
++    db.expire_all()
++    assert db.get(Notificacion, primero.id_notificacion).estado == "CANCELADA"
++
++
++def test_el_plan_se_extiende_al_entrar_en_la_ventana(client, usuario_a, db):
++    tarea = crear(client, usuario_a, days=20)
++    assert notifs(db, tarea["id_tarea"]) == []  # a más de 7 días todavía no hay avisos
++    usuario = db.get(Usuario, usuario_a.id)
++    NotificacionService(db).sincronizar(usuario, datetime.now(timezone.utc) + timedelta(days=13))
++    assert notifs(db, tarea["id_tarea"], "PROGRAMADA")
++
++
++def test_maximo_diario_por_usuario(client, usuario_a, db):
++    preferencia(client, usuario_a, "tranquilo")  # máximo 4 al día
++    for i in range(6):
++        crear(client, usuario_a, titulo=f"Tarea {i}", hours=30 + i)
++    db.expire_all()
++    tz = ZoneInfo(db.get(Usuario, usuario_a.id).zona_horaria)
++    por_dia: dict = {}
++    for n in notifs(db, estado="PROGRAMADA"):
++        dia = n.fecha_programada.astimezone(tz).date()
++        por_dia[dia] = por_dia.get(dia, 0) + 1
++    assert por_dia and max(por_dia.values()) <= 4
++
++
++# ---- aislamiento -------------------------------------------------------------------------------
++def test_cada_usuario_solo_ve_sus_notificaciones(client, usuario_a, usuario_b, db):
++    tarea = crear(client, usuario_a)
++    assert client.post("/notificaciones/sincronizar", headers=usuario_b.headers).json() == []
++    assert client.get("/notificaciones", headers=usuario_b.headers).json() == []
++    r = client.get(f"/notificaciones?id_tarea={tarea['id_tarea']}", headers=usuario_b.headers)
++    assert r.json() == []
++    propias = client.get(f"/notificaciones?id_tarea={tarea['id_tarea']}", headers=usuario_a.headers).json()
++    assert propias and all(n["id_tarea"] == tarea["id_tarea"] for n in propias)
++    # La sincronización de Beto no tocó los avisos de Ana.
++    assert all(n.fecha_sincronizacion is None for n in notifs(db, tarea["id_tarea"]))
++
++
++def test_filtrar_por_estado(client, usuario_a):
++    tarea = crear(client, usuario_a)
++    client.patch(f"/tareas/{tarea['id_tarea']}", json={"estado": "COMPLETADA"}, headers=usuario_a.headers)
++    canceladas = client.get("/notificaciones?estado=CANCELADA", headers=usuario_a.headers).json()
++    assert canceladas and all(n["estado"] == "CANCELADA" for n in canceladas)
++    assert client.get("/notificaciones?estado=OTRO", headers=usuario_a.headers).status_code == 422
+diff --git a/backend/tests/test_planificador_notificaciones.py b/backend/tests/test_planificador_notificaciones.py
+new file mode 100644
+index 0000000..9cd324a
+--- /dev/null
++++ b/backend/tests/test_planificador_notificaciones.py
+@@ -0,0 +1,178 @@
++"""RF-12 / RF-13: reglas PURAS del planificador (sin BD ni reloj real)."""
++import uuid
++from dataclasses import replace
++from datetime import datetime, time, timedelta, timezone
++from zoneinfo import ZoneInfo
++
++from app.modules.notificaciones import planificador as plan
++from app.modules.notificaciones.service import parametros_para
++
++UTC = timezone.utc
++ZONA_UTC = ZoneInfo("UTC")
++MEXICO = ZoneInfo("America/Mexico_City")
++LIMITE = datetime(2027, 3, 10, 12, 0, tzinfo=UTC)  # miércoles 12:00 UTC
++MUCHO_ANTES = LIMITE - timedelta(days=30)
++
++
++def _params(perfil="equilibrado", **cambios):
++    p = replace(parametros_para(perfil), horizonte_horas=100_000)  # plan completo, sin horizonte
++    return replace(p, **cambios)
++
++
++def _sin_silencio(perfil="equilibrado", **cambios):
++    return _params(perfil, silencio_inicio=time(0, 0), silencio_fin=time(0, 0), **cambios)
++
++
++def _tarea(limite=LIMITE, titulo="Ensayo", prioridad=2, id_tarea=None):
++    return plan.TareaPlan(id_tarea or uuid.uuid4(), titulo, limite, prioridad)
++
++
++def _restantes_horas(avisos, tipo):
++    return sorted(((LIMITE - a.fecha_programada).total_seconds() / 3600 for a in avisos if a.tipo == tipo and not a.es_aviso_final), reverse=True)
++
++
++# ---- niveles e intervalos (RF-13 reglas 1 y 2) -------------------------------------------------
++def test_niveles_segun_tiempo_restante():
++    p = _params()
++    assert plan.nivel_para(timedelta(days=8), p) is None  # más de 7 días: todavía nada
++    assert plan.nivel_para(timedelta(days=7), p) == plan.RECORDATORIO
++    assert plan.nivel_para(timedelta(hours=72), p) == plan.URGENTE
++    assert plan.nivel_para(timedelta(hours=24), p) == plan.CRITICA
++    assert plan.nivel_para(timedelta(minutes=1), p) == plan.CRITICA
++    assert plan.nivel_para(timedelta(0), p) == plan.CORRECTIVA
++
++
++def test_equilibrado_respeta_los_intervalos_definidos():
++    avisos = plan.avisos_de_tarea(_tarea(), MUCHO_ANTES, ZONA_UTC, _sin_silencio())
++    assert _restantes_horas(avisos, plan.RECORDATORIO) == [168, 144, 120, 96]  # cada 24 h
++    assert _restantes_horas(avisos, plan.URGENTE) == [72, 60, 48, 36]  # cada 12 h
++    assert _restantes_horas(avisos, plan.CRITICA) == [24, 20, 16, 12, 8, 4]  # cada 4 h
++    final = [a for a in avisos if a.es_aviso_final]
++    assert len(final) == 1 and final[0].fecha_programada == LIMITE - timedelta(hours=1)
++    assert final[0].tipo == plan.CRITICA
++
++
++def test_la_frecuencia_aumenta_al_acercarse_la_fecha_limite():
++    avisos = [a for a in plan.avisos_de_tarea(_tarea(), MUCHO_ANTES, ZONA_UTC, _sin_silencio()) if a.tipo != plan.CORRECTIVA]
++    separaciones = [(b.fecha_programada - a.fecha_programada) for a, b in zip(avisos, avisos[1:])]
++    assert separaciones == sorted(separaciones, reverse=True)  # nunca se alargan
++    niveles = [a.nivel for a in avisos]
++    assert niveles == sorted(niveles)  # el nivel nunca baja
++
++
++def test_perfiles_cambian_la_cantidad_de_avisos():
++    cuantos = {
++        perfil: len([a for a in plan.avisos_de_tarea(_tarea(), MUCHO_ANTES, ZONA_UTC, _sin_silencio(perfil)) if a.tipo != plan.CORRECTIVA])
++        for perfil in ("tranquilo", "equilibrado", "insistente")
++    }
++    assert cuantos["tranquilo"] < cuantos["equilibrado"] < cuantos["insistente"]
++    tranquilo = plan.avisos_de_tarea(_tarea(), MUCHO_ANTES, ZONA_UTC, _sin_silencio("tranquilo"))
++    assert _restantes_horas(tranquilo, plan.CRITICA) == [24, 16, 8]  # cada 8 h
++
++
++def test_correctiva_despues_de_vencer():
++    avisos = plan.avisos_de_tarea(_tarea(), MUCHO_ANTES, ZONA_UTC, _sin_silencio())
++    correctivas = [a.fecha_programada for a in avisos if a.tipo == plan.CORRECTIVA]
++    assert correctivas == [
++        LIMITE + timedelta(hours=1),
++        LIMITE.replace(hour=19),
++        LIMITE.replace(hour=19) + timedelta(days=1),
++        LIMITE.replace(hour=19) + timedelta(days=2),
++    ]
++    tranquilo = plan.avisos_de_tarea(_tarea(), MUCHO_ANTES, ZONA_UTC, _sin_silencio("tranquilo"))
++    assert [a.fecha_programada for a in tranquilo if a.tipo == plan.CORRECTIVA] == [LIMITE + timedelta(hours=1)]
++
++
++# ---- solo avisos futuros y dentro del horizonte ------------------------------------------------
++def test_no_se_planifican_avisos_pasados():
++    ahora = LIMITE - timedelta(hours=10)
++    avisos = plan.avisos_de_tarea(_tarea(), ahora, ZONA_UTC, _sin_silencio())
++    assert avisos and all(a.fecha_programada > ahora for a in avisos)
++
++
++def test_tarea_a_mas_de_7_dias_no_recibe_avisos_hasta_entrar_al_horizonte():
++    p = replace(parametros_para("equilibrado"), silencio_inicio=time(0, 0), silencio_fin=time(0, 0))
++    lejana = LIMITE + timedelta(days=30)
++    assert plan.avisos_de_tarea(_tarea(lejana), MUCHO_ANTES, ZONA_UTC, p) == []
++    # 8 días antes de su fecha límite ya entra el primer recordatorio (T - 7 días) en el horizonte.
++    assert plan.avisos_de_tarea(_tarea(lejana), lejana - timedelta(days=8), ZONA_UTC, p)
++
++
++# ---- horario de silencio y zonas horarias ------------------------------------------------------
++def test_ningun_aviso_cae_en_horario_de_silencio_en_la_zona_del_usuario():
++    limite = datetime(2027, 3, 10, 14, 0, tzinfo=UTC)  # 08:00 en Ciudad de México (UTC-6)
++    avisos = plan.avisos_de_tarea(_tarea(limite), limite - timedelta(days=30), MEXICO, _params())
++    assert avisos
++    for a in avisos:
++        hora = a.fecha_programada.astimezone(MEXICO).time()
++        assert time(7, 0) <= hora < time(22, 0), a
++
++
++def test_aviso_en_silencio_se_mueve_a_las_7():
++    p = _params()
++    momento = datetime(2027, 3, 9, 3, 0, tzinfo=MEXICO)  # 03:00 local
++    limite = datetime(2027, 3, 10, 12, 0, tzinfo=MEXICO)
++    assert plan.reubicar_por_silencio(momento, limite, MEXICO, p) == datetime(2027, 3, 9, 7, 0, tzinfo=MEXICO)
++    # 23:00 -> 07:00 del día siguiente
++    momento = datetime(2027, 3, 8, 23, 0, tzinfo=MEXICO)
++    assert plan.reubicar_por_silencio(momento, limite, MEXICO, p) == datetime(2027, 3, 9, 7, 0, tzinfo=MEXICO)
++
++
++def test_si_las_7_ya_es_tarde_el_aviso_se_adelanta_a_las_2130():
++    p = _params()
++    limite = datetime(2027, 3, 10, 6, 30, tzinfo=MEXICO)  # vence antes de terminar el silencio
++    momento = datetime(2027, 3, 10, 5, 30, tzinfo=MEXICO)  # T - 1 h, dentro del silencio
++    assert plan.reubicar_por_silencio(momento, limite, MEXICO, p) == datetime(2027, 3, 9, 21, 30, tzinfo=MEXICO)
++
++
++def test_zona_horaria_cambia_el_resultado():
++    """El mismo instante UTC cae en silencio para un usuario y no para otro."""
++    p = _params()
++    momento = datetime(2027, 3, 10, 5, 0, tzinfo=UTC)  # 05:00 UTC = 23:00 del día anterior en CDMX
++    assert plan.reubicar_por_silencio(momento, None, ZONA_UTC, p) != momento
++    assert plan.reubicar_por_silencio(datetime(2027, 3, 10, 15, 0, tzinfo=UTC), None, MEXICO, p) == datetime(2027, 3, 10, 15, 0, tzinfo=UTC)
++
++
++# ---- duplicados y separación mínima -----------------------------------------------------------
++def test_avisos_de_una_tarea_nunca_quedan_a_menos_de_15_minutos():
++    for perfil in ("tranquilo", "equilibrado", "insistente"):
++        avisos = plan.avisos_de_tarea(_tarea(), MUCHO_ANTES, MEXICO, _params(perfil))
++        momentos = [a.fecha_programada for a in avisos]
++        assert len(momentos) == len(set(momentos))  # sin duplicados exactos
++        assert all(b - a >= timedelta(minutes=15) for a, b in zip(momentos, momentos[1:]))
++
++
++def test_al_chocar_dos_avisos_se_conserva_el_de_mayor_nivel():
++    p = _sin_silencio()
++    t = uuid.uuid4()
++    a = plan.Aviso(t, plan.URGENTE, LIMITE)
++    b = plan.Aviso(t, plan.CRITICA, LIMITE + timedelta(minutes=5))
++    assert [x.tipo for x in plan._sin_avisos_cercanos([a, b], p)] == [plan.CRITICA]
++
++
++def test_planificar_dos_veces_da_el_mismo_resultado():
++    tareas = [_tarea(LIMITE + timedelta(hours=i * 7)) for i in range(3)]
++    uno = plan.planificar(tareas, MUCHO_ANTES, MEXICO, _params())
++    dos = plan.planificar(tareas, MUCHO_ANTES, MEXICO, _params())
++    assert [(a.id_tarea, a.fecha_programada, a.tipo) for a in uno] == [(a.id_tarea, a.fecha_programada, a.tipo) for a in dos]
++
++
++# ---- máximo diario ----------------------------------------------------------------------------
++def test_maximo_diario_por_usuario_conserva_el_aviso_final_y_los_de_mayor_nivel():
++    p = _sin_silencio("tranquilo")  # máximo 4 por día
++    tareas = [_tarea(LIMITE + timedelta(minutes=30 * i), titulo=f"T{i}", id_tarea=uuid.uuid4()) for i in range(5)]
++    avisos = plan.planificar(tareas, LIMITE - timedelta(hours=3), ZONA_UTC, p)
++    por_dia = {}
++    for a in avisos:
++        por_dia.setdefault(a.fecha_programada.date(), []).append(a)
++    assert all(len(lista) <= 4 for lista in por_dia.values())
++    # Los cuatro conservados del día son avisos finales (prioritarios), de las fechas límite más cercanas.
++    hoy = por_dia[LIMITE.date()]
++    assert all(a.es_aviso_final for a in hoy)
++    assert sorted(a.fecha_limite for a in hoy) == [t.fecha_limite for t in tareas[:4]]
++
++
++def test_avisos_ya_usados_del_dia_ocupan_cupo():
++    p = _sin_silencio("tranquilo")
++    avisos = plan.planificar([_tarea()], LIMITE - timedelta(hours=10), ZONA_UTC, p, {LIMITE.date(): 4})
++    assert [a for a in avisos if a.fecha_programada.date() == LIMITE.date()] == []
+diff --git a/backend/tests/test_tareas.py b/backend/tests/test_tareas.py
+index 4739dd1..77d6b08 100644
+--- a/backend/tests/test_tareas.py
++++ b/backend/tests/test_tareas.py
+@@ -181,7 +181,8 @@ def test_editar_tarea_y_registrar_el_cambio_en_el_historial(client, usuario_a, d
+     t = r.json()
+     assert (t["titulo"], t["descripcion"], t["prioridad"]) == ("Ensayo final", "Con bibliografía", "BAJA")
+ 
+-    eventos = db.scalars(select(HistorialEvento)).all()
++    # Desde RF-32 la creación también deja un evento (TAREA_CREADA); aquí se revisa solo la edición.
++    eventos = db.scalars(select(HistorialEvento).where(HistorialEvento.tipo_evento != "TAREA_CREADA")).all()
+     assert len(eventos) == 1
+     assert eventos[0].tipo_evento == "TAREA_EDITADA"
+     assert eventos[0].id_usuario == usuario_a.id
+@@ -197,7 +198,8 @@ def test_editar_sin_cambios_reales_no_genera_historial(client, usuario_a, db):
+         headers=usuario_a.headers,
+     )
+     assert r.status_code == 200
+-    assert db.scalars(select(HistorialEvento)).all() == []
++    # Solo queda el evento de creación (RF-32); la edición sin cambios no agrega nada.
++    assert [e.tipo_evento for e in db.scalars(select(HistorialEvento)).all()] == ["TAREA_CREADA"]
+ 
+ 
+ def test_editar_con_cuerpo_vacio(client, usuario_a):
+@@ -400,7 +402,8 @@ def test_un_usuario_no_puede_ver_editar_ni_eliminar_tareas_de_otro(client, usuar
+     fila = db.scalar(select(Tarea))
+     assert fila.titulo == "Privada de Ana"
+     assert fila.fecha_eliminacion is None
+-    assert db.scalars(select(HistorialEvento)).all() == []
++    # Solo el evento de creación de Ana (RF-32); los intentos de Beto no dejaron rastro.
++    assert [e.tipo_evento for e in db.scalars(select(HistorialEvento)).all()] == ["TAREA_CREADA"]
+ 
+ 
+ def test_la_lista_solo_contiene_tareas_propias(client, usuario_a, usuario_b):
+diff --git a/docs/RF-12_RF-13_RF-32.md b/docs/RF-12_RF-13_RF-32.md
+new file mode 100644
+index 0000000..d69e045
+--- /dev/null
++++ b/docs/RF-12_RF-13_RF-32.md
+@@ -0,0 +1,92 @@
++# RF-12, RF-13 y RF-32: documentación técnica
++
++Decisiones y su justificación: [`DECISIONES.md`](../DECISIONES.md) (sección "RF-12, RF-13 y RF-32").
++
++## 1. Qué exige V6 y qué cumple el código
++
++### RF-12: Generar notificaciones de tareas
++| Regla V6 | Cómo se cumple |
++|---|---|
++| 1 y 4. Solo para tareas no completadas | El plan solo toma tareas con estado ≠ COMPLETADA y no eliminadas (`NotificacionService._tareas_abiertas`). Completar o eliminar cancela los avisos futuros. |
++| 2. Asociada a una tarea | `notificacion.id_tarea` + FK compuesta `(id_tarea, id_usuario)` → `tarea`: no puede apuntar a la tarea de otro usuario. |
++| 3. Mostrar al menos el título | `mensajes.py` arma el texto con el título y la fecha límite en la zona y el idioma del usuario. |
++| 5. A tiempo = completada antes o exactamente en la fecha límite | `TAREA_COMPLETADA.datos.a_tiempo` (`ahora <= fecha_limite`). |
++| 6. Respetar los intervalos del sistema | Intervalos de `core/config.py` según el perfil de `preferencia_notificacion`. |
++
++### RF-13: Escalar la frecuencia
++| Regla V6 | Cómo se cumple |
++|---|---|
++| 1 y 2. Más frecuencia y niveles conforme baja el tiempo | Niveles RECORDATORIO (1) → URGENTE (2) → CRITICA (3) → CORRECTIVA (4), cada uno con un intervalo más corto (tabla abajo). |
++| 3. Sin avisos para tareas completadas | Igual que RF-12. |
++| 4. Completar cancela los avisos futuros | Los avisos PROGRAMADA pasan a CANCELADA con `fecha_cancelacion`. |
++| 5. Registrar las enviadas | ENVIADA + `fecha_envio` + evento `NOTIFICACION_ENVIADA` en el historial (con `id_notificacion`). |
++| 6 y 7. Completada con retraso ≠ a tiempo | `a_tiempo = false` en el historial. La fecha de una tarea completada no puede cambiar (TAR-09), así que la clasificación no se puede alterar después. |
++
++### RF-32: Historial de tareas
++| Acción mínima V6 | Evento |
++|---|---|
++| creación | `TAREA_CREADA` |
++| modificación | `TAREA_EDITADA` (valores antes/después de cada campo) |
++| cambio de estado | `TAREA_ESTADO_CAMBIADO` (Pendiente ↔ En progreso), `TAREA_REABIERTA` |
++| finalización | `TAREA_COMPLETADA` (`a_tiempo`) |
++| reprogramación | `TAREA_POSPUESTA` (fecha posterior, tarea abierta y no vencida) o `TAREA_REPROGRAMADA` (cualquier otro cambio de fecha) |
++| eliminación | `TAREA_ELIMINADA` |
++
++Reglas 9 a 12: cada evento lleva `id_tarea`, `id_usuario` y `fecha_evento`; es de solo agregar (ningún código lo modifica); se conserva aunque la tarea se elimine (borrado lógico). Se escribe en la misma transacción que el cambio: si la operación falla, no queda ni el cambio ni el evento.
++
++## 2. Parámetros (`backend/app/core/config.py`, sobrescribibles por variable de entorno)
++
++| Nivel | Tiempo restante T | Tranquilo | Equilibrado | Insistente |
++|---|---|---:|---:|---:|
++| RECORDATORIO | 72 h < T ≤ 7 días | 48 h | 24 h | 12 h |
++| URGENTE | 24 h < T ≤ 72 h | 24 h | 12 h | 6 h |
++| CRITICA | 0 < T ≤ 24 h | 8 h | 4 h | 2 h |
++| Aviso final | T = 1 h | sí | sí | sí |
++| CORRECTIVA | vencida | +1 h | +1 h y 19:00 × 3 días | +1 h y 19:00 × 3 días |
++| Máximo diario | | 4 | 8 | 12 |
++
++Además: separación mínima de 15 min entre avisos de una tarea, silencio de 22:00 a 07:00 locales y horizonte de planificación de 7 días. Ejemplo con variable de entorno: `NOTIF_MAXIMO_DIARIO='{"tranquilo":3,"equilibrado":6,"insistente":10}'`.
++
++## 3. Flujo: generar ≠ entregar ≠ mostrar
++1. **Generar** (backend): cada operación que afecta el plan llama a `replanificar`, que crea, actualiza o cancela filas de `notificacion` (estado PROGRAMADA).
++2. **Entregar** (app → backend): `POST /notificaciones/sincronizar` devuelve los avisos futuros y anota `fecha_sincronizacion`. La app debe **reemplazar** todos sus avisos locales por esa lista.
++3. **Mostrar** (sistema operativo): pendiente de integrar con un plugin de notificaciones locales (ver §6). El backend no puede confirmarlo; ENVIADA es una aproximación.
++
++## 4. Base de datos (migración `0003_notificaciones_rf_12_13.py`)
++- Tabla `notificacion`: `id_notificacion` (PK), `id_usuario` (FK), `id_tarea` (FK compuesta con `id_usuario`), `tipo`, `nivel_intensidad` (1-4), `mensaje`, `requiere_accion`, `es_aviso_final`, `estado`, `fecha_generacion`, `fecha_programada`, `fecha_sincronizacion`, `fecha_envio`, `fecha_cancelacion`, `accion_respuesta`, `fecha_respuesta`.
++- Restricciones: CHECK de tipo, estado, acción, nivel, mensaje no vacío y "tarea obligatoria salvo ACUMULACION"; `UNIQUE (id_notificacion, id_usuario)`; **índice único parcial** `(id_tarea, fecha_programada) WHERE estado <> 'CANCELADA'`.
++- `historial_evento.id_notificacion` + FK compuesta → `notificacion`, e índice `(id_usuario, fecha_evento)`.
++- Extensiones a V6: `fecha_generacion`, `fecha_sincronizacion`, `fecha_cancelacion`, `es_aviso_final`.
++- La migración solo agrega estructura; `downgrade` la revierte (probado: `upgrade` → `downgrade 0002` → `upgrade`).
++
++## 5. Endpoints nuevos o modificados
++| Método y ruta | Qué hace |
++|---|---|
++| `POST /notificaciones/sincronizar` | Nuevo. Actualiza el plan y devuelve los avisos futuros del usuario. |
++| `GET /notificaciones?estado=&id_tarea=&limite=` | Nuevo. Consulta de solo lectura. |
++| `GET /tareas/{id}/historial` | Nuevo. Eventos de la tarea propia (404 si es ajena o está eliminada). |
++| `POST /tareas`, `PATCH /tareas/{id}`, `DELETE /tareas/{id}` | Ahora también escriben el historial de RF-32 y recalculan los avisos. `PATCH` rechaza cambiar la fecha de una tarea completada (`FECHA_TAREA_COMPLETADA`). |
++| `PUT /usuarios/me/preferencia-notificacion`, `PATCH /usuarios/me` (idioma) | Ahora recalculan los avisos. |
++
++Todos exigen sesión (`Authorization: Bearer`) y solo devuelven datos del usuario autenticado.
++
++## 6. Flutter
++- `models/modelos.dart`: clase `Recordatorio`.
++- `api/repositorios.dart`: `NotificacionesRepository.sincronizar()`; `state/servicios.dart`: `notificacionesRepo`.
++- `screens/tarea_detalle_screen.dart`: sección "Próximos recordatorios". Si falla la carga se muestra un aviso y la tarea se ve igual.
++- `l10n/textos.dart`: textos ES/EN nuevos y el error `FECHA_TAREA_COMPLETADA`.
++- **Pendiente:** el aviso del sistema operativo. Pasos previstos cuando se pueda compilar:
++  1. agregar `flutter_local_notifications` y `timezone`;
++  2. en Android pedir `POST_NOTIFICATIONS` (Android 13+) y, para hora exacta, `SCHEDULE_EXACT_ALARM`, y activar *core library desugaring* en `android/app/build.gradle.kts`;
++  3. en iOS pedir permiso al iniciar;
++  4. después de iniciar sesión, al abrir la app y tras cada cambio de tarea: `sincronizar()` → cancelar todos los avisos locales → programar los recibidos (iOS admite como máximo 64 pendientes; el horizonte de 7 días lo respeta en casos normales).
++
++## 7. Cómo ejecutar y verificar
++```bash
++cd backend
++pip install -r requirements.txt          # no hay dependencias nuevas
++alembic upgrade head                     # aplica 0003 (solo agrega la tabla y una columna)
++pytest -q                                # usa la BD *_test
++uvicorn app.main:app --reload
++```
++En `/docs`: inicia sesión, crea una tarea con fecha límite en 2 días, llama `POST /notificaciones/sincronizar` (verás URGENTE/CRITICA y el aviso final), márcala COMPLETADA y repite la consulta con `GET /notificaciones?estado=CANCELADA`. Para el historial: `GET /tareas/{id}/historial`.
+diff --git a/frontend/lib/api/repositorios.dart b/frontend/lib/api/repositorios.dart
+index c216e21..124a938 100644
+--- a/frontend/lib/api/repositorios.dart
++++ b/frontend/lib/api/repositorios.dart
+@@ -73,3 +73,17 @@ class MateriasRepository {
+   Future<Materia> crear(String nombre) async =>
+       Materia.fromJson(await _api.post('/materias', body: {'nombre': nombre}) as Map<String, dynamic>);
+ }
++
++/// RF-12 / RF-13. El backend genera y escala los avisos; la app solo los consulta.
++class NotificacionesRepository {
++  NotificacionesRepository(this._api);
++
++  final ApiClient _api;
++
++  /// Pide al backend el plan vigente (lo actualiza antes de responder) y lo devuelve ordenado por hora.
++  /// Cuando se integre el aviso del sistema operativo, esta lista REEMPLAZARÁ todos los avisos locales.
++  Future<List<Recordatorio>> sincronizar() async {
++    final datos = await _api.post('/notificaciones/sincronizar') as List<dynamic>;
++    return datos.map((e) => Recordatorio.fromJson(e as Map<String, dynamic>)).toList();
++  }
++}
+diff --git a/frontend/lib/l10n/textos.dart b/frontend/lib/l10n/textos.dart
+index d783183..276b696 100644
+--- a/frontend/lib/l10n/textos.dart
++++ b/frontend/lib/l10n/textos.dart
+@@ -61,6 +61,8 @@ class Textos {
+         'FOTO_FORMATO_INVALIDO' =>
+           _t('Formato no permitido. Usa una imagen JPG, PNG o WebP.', 'Unsupported format. Use a JPG, PNG or WebP image.'),
+         'FOTO_DEMASIADO_GRANDE' => _t('La imagen supera el máximo de 5 MB.', 'The image is larger than 5 MB.'),
++        'FECHA_TAREA_COMPLETADA' => _t('Una tarea completada no puede cambiar su fecha límite. Reábrela primero.',
++            'A completed task cannot change its due date. Reopen it first.'),
+         _ => null,
+       };
+ 
+@@ -187,6 +189,25 @@ class Textos {
+   String get fechaLimite => _t('Fecha límite', 'Due date');
+   String get completadaEl => _t('Completada el', 'Completed on');
+   String get marcarCompletada => _t('Marcar como completada', 'Mark as completed');
++
++  // ───────────── Recordatorios (RF-12 / RF-13) ─────────────
++  String get proximosRecordatorios => _t('Próximos recordatorios', 'Upcoming reminders');
++  String get sinRecordatorios =>
++      _t('No hay recordatorios programados para esta tarea.', 'There are no reminders scheduled for this task.');
++  String get recordatoriosNoDisponibles =>
++      _t('No se pudieron cargar los recordatorios.', 'Reminders could not be loaded.');
++  String get recordatoriosAviso => _t('Se avisará más seguido conforme se acerque la fecha límite.',
++      'Reminders get more frequent as the due date gets closer.');
++  String tipoRecordatorio(String tipo, {bool esFinal = false}) {
++    if (esFinal) return _t('Última hora', 'Last hour');
++    return switch (tipo) {
++      'RECORDATORIO' => _t('Recordatorio', 'Reminder'),
++      'URGENTE' => _t('Urgente', 'Urgent'),
++      'CRITICA' => _t('Crítico', 'Critical'),
++      'CORRECTIVA' => _t('Tarea vencida', 'Overdue task'),
++      _ => tipo,
++    };
++  }
+   String get editarTarea => _t('Editar tarea', 'Edit task');
+   String get horaLimite => _t('Hora límite', 'Due time');
+   String get nuevaMateria => _t('Nueva materia', 'New subject');
+diff --git a/frontend/lib/models/modelos.dart b/frontend/lib/models/modelos.dart
+index 0318f6c..bcf3bce 100644
+--- a/frontend/lib/models/modelos.dart
++++ b/frontend/lib/models/modelos.dart
+@@ -126,3 +126,38 @@ class PreferenciaRecordatorios {
+         activas: j['notificaciones_activas'] as bool,
+       );
+ }
++
++/// Aviso planificado por el backend (RF-12 / RF-13). Que exista aquí NO significa que ya se haya
++/// mostrado en el teléfono: el aviso del sistema operativo se integrará en un paso posterior.
++class Recordatorio {
++  Recordatorio({
++    required this.id,
++    this.idTarea,
++    required this.tipo,
++    this.nivel,
++    required this.mensaje,
++    required this.estado,
++    required this.fechaProgramada,
++    this.esAvisoFinal = false,
++  });
++
++  final String id;
++  final String? idTarea;
++  final String tipo; // RECORDATORIO | URGENTE | CRITICA | CORRECTIVA
++  final int? nivel; // 1..4: sube conforme se acerca la fecha límite
++  final String mensaje; // ya viene en el idioma del usuario
++  final String estado; // PROGRAMADA | ENVIADA | CANCELADA ...
++  final DateTime fechaProgramada; // hora local
++  final bool esAvisoFinal;
++
++  factory Recordatorio.fromJson(Map<String, dynamic> j) => Recordatorio(
++        id: j['id_notificacion'] as String,
++        idTarea: j['id_tarea'] as String?,
++        tipo: j['tipo'] as String,
++        nivel: j['nivel_intensidad'] as int?,
++        mensaje: j['mensaje'] as String,
++        estado: j['estado'] as String,
++        fechaProgramada: DateTime.parse(j['fecha_programada'] as String).toLocal(),
++        esAvisoFinal: (j['es_aviso_final'] as bool?) ?? false,
++      );
++}
+diff --git a/frontend/lib/screens/tarea_detalle_screen.dart b/frontend/lib/screens/tarea_detalle_screen.dart
+index 94392cf..9a5ad93 100644
+--- a/frontend/lib/screens/tarea_detalle_screen.dart
++++ b/frontend/lib/screens/tarea_detalle_screen.dart
+@@ -6,7 +6,8 @@ import '../state/servicios.dart';
+ import '../widgets/comunes.dart';
+ import 'tarea_form_screen.dart';
+ 
+-/// Detalle de una tarea (RF-07) con acciones de editar (RF-05) y eliminar (RF-06).
++/// Detalle de una tarea (RF-07) con acciones de editar (RF-05) y eliminar (RF-06),
++/// y la lista de sus próximos recordatorios (RF-12 / RF-13).
+ class TareaDetalleScreen extends StatefulWidget {
+   const TareaDetalleScreen({super.key, required this.idTarea});
+ 
+@@ -40,7 +41,15 @@ class _TareaDetalleScreenState extends State<TareaDetalleScreen> {
+         // Se omite el nombre de la materia; el resto de la tarea sigue siendo válido.
+       }
+     }
+-    return _Datos(tarea, nombreMateria);
++    // Los recordatorios son informativos: si fallan, la tarea se muestra igual.
++    List<Recordatorio>? recordatorios;
++    try {
++      final todos = await notificacionesRepo.sincronizar();
++      recordatorios = todos.where((r) => r.idTarea == tarea.id).toList();
++    } catch (_) {
++      recordatorios = null;
++    }
++    return _Datos(tarea, nombreMateria, recordatorios);
+   }
+ 
+   void _recargar() => setState(() => _futuro = _cargar());
+@@ -158,6 +167,8 @@ class _TareaDetalleScreenState extends State<TareaDetalleScreen> {
+                       icon: const Icon(Icons.check),
+                       label: Text(context.t.marcarCompletada),
+                     ),
++                  const SizedBox(height: 24),
++                  _SeccionRecordatorios(recordatorios: datos.recordatorios),
+                 ],
+               ),
+             );
+@@ -169,10 +180,59 @@ class _TareaDetalleScreenState extends State<TareaDetalleScreen> {
+ }
+ 
+ class _Datos {
+-  _Datos(this.tarea, this.nombreMateria);
++  _Datos(this.tarea, this.nombreMateria, this.recordatorios);
+ 
+   final Tarea tarea;
+   final String? nombreMateria;
++
++  /// null = no se pudieron cargar.
++  final List<Recordatorio>? recordatorios;
++}
++
++/// Próximos avisos de la tarea, tal como los planificó el backend (RF-12 / RF-13).
++class _SeccionRecordatorios extends StatelessWidget {
++  const _SeccionRecordatorios({required this.recordatorios});
++
++  final List<Recordatorio>? recordatorios;
++
++  @override
++  Widget build(BuildContext context) {
++    final tema = Theme.of(context);
++    final lista = recordatorios;
++    final Widget contenido;
++    if (lista == null) {
++      contenido = Padding(
++        padding: const EdgeInsets.symmetric(vertical: 12),
++        child: Text(context.t.recordatoriosNoDisponibles, style: tema.textTheme.bodyMedium),
++      );
++    } else if (lista.isEmpty) {
++      contenido = Padding(
++        padding: const EdgeInsets.symmetric(vertical: 12),
++        child: Text(context.t.sinRecordatorios, style: tema.textTheme.bodyMedium),
++      );
++    } else {
++      contenido = Column(children: [
++        for (var i = 0; i < lista.length; i++) ...[
++          if (i > 0) const Divider(),
++          _Fila(
++            context.t.tipoRecordatorio(lista[i].tipo, esFinal: lista[i].esAvisoFinal),
++            context.t.fechaHora(lista[i].fechaProgramada),
++          ),
++        ],
++      ]);
++    }
++    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
++      Text(context.t.proximosRecordatorios, style: tema.textTheme.titleSmall),
++      const SizedBox(height: 4),
++      Text(context.t.recordatoriosAviso,
++          style: tema.textTheme.bodySmall?.copyWith(color: tema.colorScheme.onSurfaceVariant)),
++      const SizedBox(height: 8),
++      Superficie(
++        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
++        child: contenido,
++      ),
++    ]);
++  }
+ }
+ 
+ class _Fila extends StatelessWidget {
+diff --git a/frontend/lib/state/servicios.dart b/frontend/lib/state/servicios.dart
+index 7e9318c..24f74a4 100644
+--- a/frontend/lib/state/servicios.dart
++++ b/frontend/lib/state/servicios.dart
+@@ -13,4 +13,5 @@ final idiomaController = IdiomaController(const FlutterSecureStorage());
+ final authController = AuthController(apiClient, idiomaController);
+ final tareasRepo = TareasRepository(apiClient);
+ final materiasRepo = MateriasRepository(apiClient);
++final notificacionesRepo = NotificacionesRepository(apiClient);
+ final temaController = TemaController(const FlutterSecureStorage());
+diff --git a/frontend/test/widget_test.dart b/frontend/test/widget_test.dart
+index 9d0ee41..53f247f 100644
+--- a/frontend/test/widget_test.dart
++++ b/frontend/test/widget_test.dart
+@@ -131,6 +131,36 @@ void main() {
+       expect(u.tieneFoto, isTrue);
+     });
+ 
++    test('Recordatorio.fromJson (RF-12/RF-13) lee tipo, nivel y hora local', () {
++      final r = Recordatorio.fromJson({
++        'id_notificacion': 'n1',
++        'id_tarea': 't1',
++        'tipo': 'CRITICA',
++        'nivel_intensidad': 3,
++        'mensaje': 'Falta 1 hora',
++        'requiere_accion': false,
++        'es_aviso_final': true,
++        'estado': 'PROGRAMADA',
++        'fecha_generacion': '2030-01-01T10:00:00Z',
++        'fecha_programada': '2030-01-01T11:00:00Z',
++        'fecha_envio': null,
++        'fecha_cancelacion': null,
++      });
++      expect(r.idTarea, 't1');
++      expect(r.nivel, 3);
++      expect(r.esAvisoFinal, isTrue);
++      expect(r.fechaProgramada.isUtc, isFalse);
++      expect(r.fechaProgramada.toUtc(), DateTime.utc(2030, 1, 1, 11));
++    });
++
++    test('tipos de recordatorio y error de fecha en tarea completada están traducidos', () {
++      expect(const Textos('es').tipoRecordatorio('URGENTE'), 'Urgente');
++      expect(const Textos('en').tipoRecordatorio('URGENTE'), 'Urgent');
++      expect(const Textos('es').tipoRecordatorio('CRITICA', esFinal: true), 'Última hora');
++      expect(const Textos('es').errorPorCodigo('FECHA_TAREA_COMPLETADA'), isNotNull);
++      expect(const Textos('en').errorPorCodigo('FECHA_TAREA_COMPLETADA'), isNot(const Textos('es').errorPorCodigo('FECHA_TAREA_COMPLETADA')));
++    });
++
+     test('Usuario.fromJson tolera respuestas sin los campos nuevos', () {
+       final u = Usuario.fromJson(
+           {'id_usuario': '1', 'email': 'a@b.com', 'nombre': null, 'zona_horaria': 'UTC'});

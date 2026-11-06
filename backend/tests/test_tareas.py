@@ -181,7 +181,8 @@ def test_editar_tarea_y_registrar_el_cambio_en_el_historial(client, usuario_a, d
     t = r.json()
     assert (t["titulo"], t["descripcion"], t["prioridad"]) == ("Ensayo final", "Con bibliografía", "BAJA")
 
-    eventos = db.scalars(select(HistorialEvento)).all()
+    # Desde RF-32 la creación también deja un evento (TAREA_CREADA); aquí se revisa solo la edición.
+    eventos = db.scalars(select(HistorialEvento).where(HistorialEvento.tipo_evento != "TAREA_CREADA")).all()
     assert len(eventos) == 1
     assert eventos[0].tipo_evento == "TAREA_EDITADA"
     assert eventos[0].id_usuario == usuario_a.id
@@ -197,7 +198,8 @@ def test_editar_sin_cambios_reales_no_genera_historial(client, usuario_a, db):
         headers=usuario_a.headers,
     )
     assert r.status_code == 200
-    assert db.scalars(select(HistorialEvento)).all() == []
+    # Solo queda el evento de creación (RF-32); la edición sin cambios no agrega nada.
+    assert [e.tipo_evento for e in db.scalars(select(HistorialEvento)).all()] == ["TAREA_CREADA"]
 
 
 def test_editar_con_cuerpo_vacio(client, usuario_a):
@@ -400,7 +402,8 @@ def test_un_usuario_no_puede_ver_editar_ni_eliminar_tareas_de_otro(client, usuar
     fila = db.scalar(select(Tarea))
     assert fila.titulo == "Privada de Ana"
     assert fila.fecha_eliminacion is None
-    assert db.scalars(select(HistorialEvento)).all() == []
+    # Solo el evento de creación de Ana (RF-32); los intentos de Beto no dejaron rastro.
+    assert [e.tipo_evento for e in db.scalars(select(HistorialEvento)).all()] == ["TAREA_CREADA"]
 
 
 def test_la_lista_solo_contiene_tareas_propias(client, usuario_a, usuario_b):

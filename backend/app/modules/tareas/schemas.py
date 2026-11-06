@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, StringConstraints, model_validator
@@ -22,6 +22,7 @@ class TareaCrear(BaseModel):
     fecha_limite: AwareDatetime
     prioridad: Prioridad
     id_materia: uuid.UUID | None = None
+    fecha_programada: date | None = None  # RF-21: día comprometido explícitamente (opcional)
 
 
 class TareaActualizar(BaseModel):
@@ -39,6 +40,7 @@ class TareaActualizar(BaseModel):
     prioridad: Prioridad | None = None
     estado: EstadoTarea | None = None
     id_materia: uuid.UUID | None = None
+    fecha_programada: date | None = None  # null la quita
 
     @model_validator(mode="after")
     def validar_campos_enviados(self):
@@ -63,6 +65,7 @@ class TareaSalida(BaseModel):
     fecha_limite_original: datetime
     fecha_completada: datetime | None
     fecha_actualizacion: datetime
+    fecha_programada: date | None = None
 
     @classmethod
     def desde_tarea(cls, tarea, ahora: datetime) -> "TareaSalida":
@@ -78,4 +81,5 @@ class TareaSalida(BaseModel):
             fecha_limite_original=tarea.fecha_limite_original,
             fecha_completada=tarea.fecha_completada,
             fecha_actualizacion=tarea.fecha_actualizacion,
+            fecha_programada=tarea.fecha_programada,
         )

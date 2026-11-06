@@ -1,8 +1,8 @@
-# AntiProcrastinación – avance RF-01 a RF-11
+# AntiProcrastinación – avance RF-01 a RF-11, RF-12/RF-13, RF-21 a RF-27 y RF-32
 
 | Parte | Estado |
 |---|---|
-| `backend/` (FastAPI + PostgreSQL) | **Implementado y probado** (139 pruebas) |
+| `backend/` (FastAPI + PostgreSQL) | **Implementado y probado** (198 pruebas: RF-01 a RF-11, RF-12, RF-13 y RF-32) |
 | `frontend/` (Flutter) | 
 
 Decisiones y puntos abiertos: [`DECISIONES.md`](DECISIONES.md).
@@ -78,8 +78,38 @@ Para agregar un RF nuevo (p. ej. notificaciones): crear `modules/notificaciones/
 
 Migración `0002`: columnas `usuario.idioma`, `personalizacion_completada_en`, `tutorial_completado_en`, `foto_actualizada_en` y tablas `preferencia_notificacion` y `foto_perfil`. Si ya tenías la BD en `0001`: `alembic upgrade head`. Hace falta `pip install -r requirements.txt` (nuevo: Pillow, python-multipart).
 
+### RF-12, RF-13 y RF-32 (notificaciones e historial)
+Detalle completo en [`docs/RF-12_RF-13_RF-32.md`](docs/RF-12_RF-13_RF-32.md).
+
+| RF | Endpoint | Código principal | Pruebas |
+|---|---|---|---|
+| RF-12 Generar notificaciones | `POST /notificaciones/sincronizar`, `GET /notificaciones` (+ automático al crear/editar/eliminar tareas y al cambiar preferencias) | `notificaciones/service.py` | `test_notificaciones.py` |
+| RF-13 Escalar frecuencia | (dentro del plan) | `notificaciones/planificador.py` (reglas puras) | `test_planificador_notificaciones.py`, `test_notificaciones.py` |
+| RF-32 Historial de tareas | `GET /tareas/{id}/historial` | `tareas/service.py`, `historial/` | `test_historial_rf32.py` |
+
+Migración `0003` (`0003_notificaciones_rf_12_13.py`): tabla `notificacion` y columna `historial_evento.id_notificacion`. Solo agrega estructura. Si tu BD está en `0002`: `alembic upgrade head`.
+
+Proceso periódico (opcional, idempotente): `python -m app.modules.notificaciones.procesos` registra las enviadas y extiende el plan de todos los usuarios. Se puede programar con cron.
+
+### RF-21 a RF-27 (gamificación)
+Detalle completo en [`docs/RF-21_RF-27.md`](docs/RF-21_RF-27.md).
+
+| RF | Endpoint | Código principal | Pruebas |
+|---|---|---|---|
+| RF-21 Racha diaria | (automático) `GET /gamificacion/progreso` | `gamificacion/reglas.py`, `gamificacion/service.py` | `test_gamificacion_reglas.py`, `test_gamificacion.py` |
+| RF-22 Puntos | (al completar una tarea) | `tareas/service.py` → `GamificacionService.tarea_completada` | `test_gamificacion.py` |
+| RF-23 Logros | `GET /gamificacion/logros` | `gamificacion/service.py` | `test_gamificacion.py` |
+| RF-24 Protección | `POST /gamificacion/protecciones/usar` | `gamificacion/service.py` | `test_gamificacion.py` |
+| RF-25 Recuperación | `POST /gamificacion/recuperaciones`, `POST /gamificacion/recuperaciones/{id}/cancelar` | `gamificacion/service.py` | `test_gamificacion.py` |
+| RF-26 Progreso | `GET /gamificacion/progreso`, `GET /gamificacion/historial` | `gamificacion/router.py` | `test_gamificacion.py` |
+| RF-27 Recompensas | (automático) | `gamificacion/service.py` | `test_gamificacion.py` |
+
+Migración `0004` (`0004_gamificacion_rf_21_27.py`): 6 tablas de gamificación, columna `tarea.fecha_programada` y catálogo de 12 logros. Solo agrega. Si tu BD está en `0003`: `alembic upgrade head`.
+
+Proceso diario (opcional, idempotente): `python -m app.modules.gamificacion.procesos`.
+
 ### Modificaciones al modelo del documento
-Ver `DECISIONES.md` y los docstrings de cada `models.py`. Resumen: se agregó `materia.nombre_normalizado` y dos restricciones únicas (soporte de RF-10/RF-11); no se crearon `usuario.auth_uid`, `tarea.progreso`, `tarea.veces_pospuesta`, `tarea.fecha_programada` ni los FK de historial a notificación/sesión de enfoque (pertenecen a requerimientos posteriores).
+Ver `DECISIONES.md` y los docstrings de cada `models.py`. Resumen: se agregó `materia.nombre_normalizado` y dos restricciones únicas (soporte de RF-10/RF-11); no se crearon `usuario.auth_uid`, `tarea.progreso`, `tarea.veces_pospuesta` (ni, hasta RF-21, `tarea.fecha_programada`, que se agregó en la migración `0004`) ni los FK de historial a notificación/sesión de enfoque (pertenecen a requerimientos posteriores).
 
 ## Frontend (borrador sin verificar)
 No hay carpetas `android/` ni `ios/`; se generan con Flutter instalado:
@@ -94,6 +124,7 @@ flutter run -d chrome --dart-define=API_BASE_URL=http://localhost:8000        # 
 - La API usa HTTP sin cifrar en desarrollo: en `android/app/src/main/AndroidManifest.xml` agrega `android:usesCleartextTraffic="true"` en `<application>` (solo para desarrollo).
 - `flutter_secure_storage` 9.x requiere `minSdkVersion` 18 o superior (en `android/app/build.gradle`).
 - Pantallas: inicio de sesión, registro, **Personalización inicial**, **Tutorial**, Inicio, Tareas (filtros), crear/editar tarea, detalle, Calendario básico y **Perfil** (foto, nombre, idioma, notificaciones, tema, cerrar sesión).
+- Gamificación (RF-21 a RF-27): tarjeta de racha en Inicio que abre la pantalla **Progreso** (puntos, nivel, protecciones, recuperación y logros).
 - Idiomas (ES/EN): todos los textos están en `lib/l10n/textos.dart` (cada texto lleva sus dos traducciones juntas). Para un idioma nuevo: agregarlo a `idiomasSoportados` y traducir cada texto. Los datos del usuario (títulos, materias) no se traducen.
 - Foto de perfil con `image_picker`: tras actualizar el repo ejecuta `flutter pub get`. En iOS ya se agregaron los textos de permiso a `Info.plist`.
 - Pendiente tras compilar: probar el flujo completo contra el backend (registro → login → crear materia/tarea → filtrar → editar → eliminar → cerrar sesión → reabrir app).

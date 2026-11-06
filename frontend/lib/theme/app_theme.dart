@@ -139,7 +139,7 @@ const _esquemaOscuro = ColorScheme(
 /// Construye el tema minimalista: sin sombras, bordes finos, esquinas redondeadas y mucho aire.
 ThemeData construirTema(Brightness brillo) {
   final esquema = brillo == Brightness.light ? _esquemaClaro : _esquemaOscuro;
-  final base = ThemeData(colorScheme: esquema, useMaterial3: true).textTheme;
+  final base = ThemeData(colorScheme: esquema, useMaterial3: true,fontFamily: 'Sniglet').textTheme;
 
   TextStyle? peso(TextStyle? estilo, FontWeight w, {double? espaciado}) =>
       estilo?.copyWith(fontWeight: w, letterSpacing: espaciado);
@@ -162,6 +162,7 @@ ThemeData construirTema(Brightness brillo) {
 
   return ThemeData(
     useMaterial3: true,
+    fontFamily: 'Sniglet',
     colorScheme: esquema,
     scaffoldBackgroundColor: esquema.surface,
     textTheme: textos,

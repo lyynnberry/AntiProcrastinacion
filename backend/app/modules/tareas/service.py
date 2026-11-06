@@ -1,19 +1,25 @@
 """Lógica de negocio de tareas: RF-04 (crear), RF-05 (editar), RF-06 (eliminar), RF-07 (consultar/filtrar),
 RF-08 (fecha límite), RF-09 (prioridad) y RF-11 (asociar con materia).
+
+RF-32: cada operación escribe sus eventos de historial en la MISMA transacción que el cambio; si algo falla
+no queda ni el cambio ni el evento. RF-12/RF-13: al final de cada operación se recalcula el plan de avisos
+del usuario, también dentro de la transacción.
 """
 import uuid
 from datetime import date, datetime, time, timedelta
 from typing import Any
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.errors import ErrorValidacion, NoEncontrado
-from app.core.tiempo import ahora_utc
+from app.core.tiempo import ahora_utc, zona_horaria
+from app.modules.gamificacion.service import GamificacionService
 from app.modules.historial import tipos as tipos_evento
 from app.modules.historial.repository import HistorialRepository
 from app.modules.materias.repository import MateriaRepository
+from app.modules.notificaciones.service import NotificacionService
 from app.modules.tareas.enums import PRIORIDAD_A_NUMERO, EstadoTarea, Prioridad
 from app.modules.tareas.models import Tarea
 from app.modules.tareas.reglas import estado_efectivo, validar_fecha_limite_futura
@@ -44,10 +50,19 @@ def _a_json(valor: Any) -> Any:
 
 
 def _zona_del_usuario(usuario: Usuario) -> ZoneInfo:
-    try:
-        return ZoneInfo(usuario.zona_horaria)
-    except ZoneInfoNotFoundError:
-        return ZoneInfo(settings.zona_horaria_defecto)
+    return zona_horaria(usuario.zona_horaria)
+
+
+def _validar_fecha_programada(programada: date | None, fecha_limite: datetime, ahora: datetime, zona: ZoneInfo) -> None:
+    """RF-21 (DECISIONES, gamificación): el día al que se compromete una tarea va de hoy (local) al día local
+    de su fecha límite. No se puede comprometer un día pasado ni uno posterior a la entrega."""
+    if programada is None:
+        return
+    hoy = ahora.astimezone(zona).date()
+    if programada < hoy or programada > fecha_limite.astimezone(zona).date():
+        raise ErrorValidacion(
+            "La fecha programada debe estar entre hoy y el día de la fecha límite.", "FECHA_PROGRAMADA_INVALIDA"
+        )
 
 
 class TareaService:
@@ -56,11 +71,13 @@ class TareaService:
         self.tareas = TareaRepository(db)
         self.materias = MateriaRepository(db)
         self.historial = HistorialRepository(db)
+        self.notificaciones = NotificacionService(db)
 
     # ---- RF-04, RF-08, RF-09, RF-11 -----------------------------------------------------
     def crear(self, usuario: Usuario, datos: TareaCrear) -> Tarea:
         ahora = ahora_utc()
         validar_fecha_limite_futura(datos.fecha_limite, ahora)
+        _validar_fecha_programada(datos.fecha_programada, datos.fecha_limite, ahora, _zona_del_usuario(usuario))
         self._exigir_materia_propia(datos.id_materia, usuario)
 
         tarea = self.tareas.crear(
@@ -73,8 +90,24 @@ class TareaService:
             fecha_creacion=ahora,
             fecha_limite=datos.fecha_limite,
             fecha_limite_original=datos.fecha_limite,
+            fecha_programada=datos.fecha_programada,
             fecha_actualizacion=ahora,
         )
+        self.historial.registrar(  # RF-32: creación
+            id_usuario=usuario.id_usuario,
+            id_tarea=tarea.id_tarea,
+            tipo_evento=tipos_evento.TAREA_CREADA,
+            datos={
+                "titulo": tarea.titulo,
+                "prioridad": tarea.prioridad,
+                "estado": tarea.estado,
+                "fecha_limite": _a_json(tarea.fecha_limite),
+                "id_materia": _a_json(tarea.id_materia),
+                "fecha_programada": _a_json(tarea.fecha_programada),
+            },
+            fecha_evento=ahora,
+        )
+        self.notificaciones.replanificar(usuario, ahora)  # RF-12: primer ciclo de avisos
         self.db.commit()
         return tarea
 
@@ -120,6 +153,7 @@ class TareaService:
         ahora = ahora_utc()
         enviados = datos.model_fields_set
         cambios: dict[str, tuple[Any, Any]] = {}  # campo -> (valor_antes, valor_despues)
+        estado_efectivo_antes = estado_efectivo(tarea, ahora)
 
         # Solo se registran y validan los campos que REALMENTE cambian. Así, editar una tarea
         # vencida sin tocar su fecha límite no obliga a cambiarla (y reenviar el mismo valor tampoco).
@@ -147,6 +181,35 @@ class TareaService:
         if "estado" in enviados:
             self._aplicar_estado(tarea, datos.estado, ahora, cambios)
 
+        # RF-21: día comprometido. Una vez que el día programado llegó, ya no se puede mover ni quitar
+        # (si no, bastaría con cambiarlo para salvar la racha). Si cambia la fecha límite, se revalida.
+        zona = _zona_del_usuario(usuario)
+        programada_final = tarea.fecha_programada
+        if "fecha_programada" in enviados and datos.fecha_programada != tarea.fecha_programada:
+            if tarea.fecha_programada is not None and tarea.fecha_programada <= ahora.astimezone(zona).date():
+                raise ErrorValidacion(
+                    "El día programado ya llegó: no se puede cambiar.", "FECHA_PROGRAMADA_NO_EDITABLE"
+                )
+            cambios["fecha_programada"] = (tarea.fecha_programada, datos.fecha_programada)
+            programada_final = datos.fecha_programada
+        if "fecha_programada" in cambios or "fecha_limite" in cambios:
+            limite_final = cambios["fecha_limite"][1] if "fecha_limite" in cambios else tarea.fecha_limite
+            if "fecha_programada" in cambios:
+                _validar_fecha_programada(programada_final, limite_final, ahora, zona)
+            elif programada_final is not None and programada_final > limite_final.astimezone(zona).date():
+                raise ErrorValidacion(
+                    "La fecha programada debe estar entre hoy y el día de la fecha límite.", "FECHA_PROGRAMADA_INVALIDA"
+                )
+
+        # TAR-09 (DECISIONES §5.2, protege RF-13 reglas 6-7): una tarea COMPLETADA no puede cambiar su
+        # fecha límite; primero hay que reabrirla. Si no, una entrega con retraso podría volverse "a tiempo".
+        estado_final = cambios.get("estado", (None, tarea.estado))[1]
+        if "fecha_limite" in cambios and estado_final == EstadoTarea.COMPLETADA.value:
+            raise ErrorValidacion(
+                "Una tarea completada no puede cambiar su fecha límite. Reábrela primero.",
+                "FECHA_TAREA_COMPLETADA",
+            )
+
         if not cambios:
             return tarea  # nada cambió: no se escribe nada ni se llena el historial
 
@@ -163,8 +226,70 @@ class TareaService:
             },
             fecha_evento=ahora,
         )
+        self._registrar_eventos_especificos(usuario, tarea, cambios, estado_efectivo_antes, ahora)
+        if cambios.get("estado", (None, None))[1] == EstadoTarea.COMPLETADA.value:
+            # RF-22: puntos (una sola vez por tarea) y RF-23/RF-27: logros y recompensas, en esta transacción.
+            limite = cambios["fecha_limite"][0] if "fecha_limite" in cambios else tarea.fecha_limite
+            GamificacionService(self.db).tarea_completada(usuario, tarea.id_tarea, ahora <= limite, ahora)
+        self.notificaciones.replanificar(usuario, ahora)  # RF-13: recalcula o cancela los avisos
         self.db.commit()
         return tarea
+
+    def _registrar_eventos_especificos(
+        self,
+        usuario: Usuario,
+        tarea: Tarea,
+        cambios: dict[str, tuple[Any, Any]],
+        estado_efectivo_antes: EstadoTarea,
+        ahora: datetime,
+    ) -> None:
+        """RF-32: además de TAREA_EDITADA, un evento por cada hecho relevante (como máximo uno de cada tipo)."""
+
+        def registrar(tipo: str, datos: dict) -> None:
+            self.historial.registrar(
+                id_usuario=usuario.id_usuario,
+                id_tarea=tarea.id_tarea,
+                tipo_evento=tipo,
+                datos=datos,
+                fecha_evento=ahora,
+            )
+
+        if "fecha_limite" in cambios:
+            antes, despues = cambios["fecha_limite"]
+            abierta_no_vencida = estado_efectivo_antes in (EstadoTarea.PENDIENTE, EstadoTarea.EN_PROGRESO)
+            # DECISIONES §5.1 punto 5: mover a una fecha POSTERIOR una tarea abierta y no vencida es posponerla.
+            tipo = tipos_evento.TAREA_POSPUESTA if abierta_no_vencida and despues > antes else tipos_evento.TAREA_REPROGRAMADA
+            registrar(
+                tipo,
+                {
+                    "antes": _a_json(antes),
+                    "despues": _a_json(despues),
+                    "fecha_limite_original": _a_json(tarea.fecha_limite_original),
+                    "estaba_vencida": estado_efectivo_antes == EstadoTarea.VENCIDA,
+                },
+            )
+
+        if "estado" in cambios:
+            antes, despues = cambios["estado"]
+            if despues == EstadoTarea.COMPLETADA.value:
+                # RF-12 regla 5: a tiempo si se completa antes o exactamente en la fecha límite. Se compara con la
+                # fecha límite VIGENTE ANTES de esta operación, para que no se pueda mover la fecha y completar a la vez.
+                limite = cambios["fecha_limite"][0] if "fecha_limite" in cambios else tarea.fecha_limite
+                registrar(
+                    tipos_evento.TAREA_COMPLETADA,
+                    {
+                        "estado_anterior": antes,
+                        "fecha_completada": _a_json(ahora),
+                        "fecha_limite": _a_json(limite),
+                        "a_tiempo": ahora <= limite,  # False = completada con retraso (RF-13 reglas 6-7)
+                        # RF-23 (logros VELOCIDAD): completada con al menos N horas de anticipación.
+                        "anticipada": ahora <= limite - timedelta(hours=settings.gam_horas_anticipacion),
+                    },
+                )
+            elif antes == EstadoTarea.COMPLETADA.value:
+                registrar(tipos_evento.TAREA_REABIERTA, {"antes": antes, "despues": despues})
+            else:
+                registrar(tipos_evento.TAREA_ESTADO_CAMBIADO, {"antes": antes, "despues": despues})
 
     @staticmethod
     def _aplicar_estado(
@@ -200,6 +325,7 @@ class TareaService:
             datos={"titulo": tarea.titulo},
             fecha_evento=ahora,
         )
+        self.notificaciones.replanificar(usuario, ahora)  # RF-06 regla 6: sin avisos para tareas eliminadas
         self.db.commit()
 
     # ---- auxiliar RF-11 ----------------------------------------------------------------
